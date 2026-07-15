@@ -10,6 +10,14 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: profile
+    description: User profile operations
+  - name: conversations
+    description: Conversation and message operations
+  - name: memories
+    description: Remembered facts about the user
+  - name: stats
+    description: Summary stats
 paths:
   /healthz:
     get:
@@ -24,6 +32,218 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /profile:
+    get:
+      operationId: getProfile
+      tags: [profile]
+      summary: Get the current user's profile (auto-created on first access)
+      responses:
+        "200":
+          description: Profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Profile"
+    patch:
+      operationId: updateProfile
+      tags: [profile]
+      summary: Update the current user's profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProfileUpdate"
+      responses:
+        "200":
+          description: Updated profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Profile"
+  /stats:
+    get:
+      operationId: getStats
+      tags: [stats]
+      summary: Get summary stats for the current user
+      responses:
+        "200":
+          description: Stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Stats"
+  /conversations:
+    get:
+      operationId: listConversations
+      tags: [conversations]
+      summary: List the current user's conversations, most recent first
+      responses:
+        "200":
+          description: List of conversations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Conversation"
+    post:
+      operationId: createConversation
+      tags: [conversations]
+      summary: Start a new conversation
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConversationInput"
+      responses:
+        "201":
+          description: Created conversation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Conversation"
+  /conversations/{id}:
+    get:
+      operationId: getConversation
+      tags: [conversations]
+      summary: Get a conversation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Conversation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Conversation"
+        "404":
+          description: Not found
+    delete:
+      operationId: deleteConversation
+      tags: [conversations]
+      summary: Delete a conversation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
+  /conversations/{id}/messages:
+    get:
+      operationId: listMessages
+      tags: [conversations]
+      summary: List messages in a conversation, oldest first
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of messages
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Message"
+        "404":
+          description: Not found
+    post:
+      operationId: sendMessage
+      tags: [conversations]
+      summary: Send a text message and get the companion's reply
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessageInput"
+      responses:
+        "201":
+          description: The user message and the companion's reply
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageExchange"
+        "404":
+          description: Not found
+  /conversations/{id}/voice-messages:
+    post:
+      operationId: sendVoiceMessage
+      tags: [conversations]
+      summary: Send a voice recording and get a spoken reply back
+      description: >
+        Accepts a base64-encoded audio recording, transcribes it, gets the
+        companion's reply, and synthesizes that reply as speech.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VoiceMessageInput"
+      responses:
+        "201":
+          description: The transcribed user message, companion's reply, and synthesized audio
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VoiceMessageExchange"
+        "404":
+          description: Not found
+  /memories:
+    get:
+      operationId: listMemories
+      tags: [memories]
+      summary: List things the companion remembers about the user
+      responses:
+        "200":
+          description: List of memories
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Memory"
+  /memories/{id}:
+    delete:
+      operationId: deleteMemory
+      tags: [memories]
+      summary: Forget a remembered fact
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
 components:
   schemas:
     HealthStatus:
@@ -33,4 +253,83 @@ components:
           type: string
       required:
         - status
+    Profile:
+      type: object
+      required: [userId, companionName, createdAt, updatedAt]
+      properties:
+        userId: { type: string }
+        preferredName: { type: ["string", "null"] }
+        companionName: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ProfileUpdate:
+      type: object
+      properties:
+        preferredName: { type: string }
+        companionName: { type: string, minLength: 1 }
+    Stats:
+      type: object
+      required:
+        [conversationCount, messageCount, memoryCount, lastActiveAt]
+      properties:
+        conversationCount: { type: integer }
+        messageCount: { type: integer }
+        memoryCount: { type: integer }
+        lastActiveAt: { type: ["string", "null"], format: date-time }
+    Conversation:
+      type: object
+      required: [id, title, createdAt, updatedAt]
+      properties:
+        id: { type: integer }
+        title: { type: ["string", "null"] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ConversationInput:
+      type: object
+      properties:
+        title: { type: string }
+    Message:
+      type: object
+      required: [id, conversationId, role, content, createdAt]
+      properties:
+        id: { type: integer }
+        conversationId: { type: integer }
+        role: { type: string, enum: [user, assistant] }
+        content: { type: string }
+        createdAt: { type: string, format: date-time }
+    MessageInput:
+      type: object
+      required: [content]
+      properties:
+        content: { type: string, minLength: 1 }
+    MessageExchange:
+      type: object
+      required: [userMessage, assistantMessage]
+      properties:
+        userMessage: { $ref: "#/components/schemas/Message" }
+        assistantMessage: { $ref: "#/components/schemas/Message" }
+    VoiceMessageInput:
+      type: object
+      required: [audioBase64, mimeType]
+      properties:
+        audioBase64: { type: string, description: Base64-encoded audio data }
+        mimeType: { type: string, description: "e.g. audio/webm" }
+    VoiceMessageExchange:
+      type: object
+      required: [userMessage, assistantMessage, audioBase64, audioMimeType]
+      properties:
+        userMessage: { $ref: "#/components/schemas/Message" }
+        assistantMessage: { $ref: "#/components/schemas/Message" }
+        audioBase64:
+          type: string
+          description: Base64-encoded synthesized speech audio of the reply
+        audioMimeType: { type: string }
+    Memory:
+      type: object
+      required: [id, content, category, createdAt]
+      properties:
+        id: { type: integer }
+        content: { type: string }
+        category: { type: ["string", "null"] }
+        createdAt: { type: string, format: date-time }
 
