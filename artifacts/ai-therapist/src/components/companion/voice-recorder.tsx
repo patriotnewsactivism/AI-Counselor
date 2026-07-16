@@ -1,202 +1,582 @@
-import { useState, useRef, useEffect, forwardRef, useImperativeHandle } from "react";
-import { Mic, Square, Loader2, Send } from "lucide-react";
+import { useEffect, useRef, useState, forwardRef, useImperativeHandle } from "react";
+import { Mic, Square, Loader2, Send, Radio, ShieldCheck, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
+export type LiveListenMode = "always" | "wake";
+
+type TurnState = "idle" | "listening" | "recording" | "processing";
+
+type WakeRecognitionResult = {
+  isFinal?: boolean;
+  0?: { transcript?: string };
+};
+
+type WakeRecognitionEvent = Event & {
+  results: ArrayLike<WakeRecognitionResult>;
+};
+
+type WakeRecognition = {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onresult: ((event: WakeRecognitionEvent) => void) | null;
+  onend: (() => void) | null;
+  onerror: ((event: Event & { error?: string }) => void) | null;
+  start: () => void;
+  stop: () => void;
+  abort: () => void;
+};
+
+type WakeRecognitionConstructor = new () => WakeRecognition;
+
 export interface VoiceRecorderHandle {
-  /** Called by companion.tsx to re-arm the mic after a reply finishes.
-   *  This is the swap-seam: a future "live" mode would replace this
-   *  startRecording/stopRecording pair with a WebRTC streaming channel. */
+  /** Start a hands-free conversation session. */
   startRecording: () => Promise<void>;
+  /** Resume turn detection after Aura finishes speaking. */
+  resumeListening: () => void;
+  /** End the hands-free conversation session and release the microphone. */
   stopRecording: () => void;
 }
 
 interface VoiceRecorderProps {
   onSendAudio: (base64: string, mimeType: string) => Promise<void>;
   onSendText: (text: string) => Promise<void>;
+  /** Keep true while the companion is transcribing, thinking, or speaking. */
   isProcessing: boolean;
+  mode: LiveListenMode;
+  wakeWord: string;
+  onModeChange: (mode: LiveListenMode) => void;
+  onWakeWordChange: (wakeWord: string) => void;
+  onSessionChange?: (active: boolean) => void;
+}
+
+const START_THRESHOLD = 0.035;
+const SILENCE_THRESHOLD = 0.022;
+const START_HOLD_MS = 140;
+const SILENCE_HOLD_MS = 1050;
+const MIN_TURN_MS = 420;
+const MAX_TURN_MS = 45_000;
+
+function supportedMimeType(): string | undefined {
+  const candidates = [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/mp4",
+    "audio/ogg;codecs=opus",
+  ];
+  return candidates.find((type) => MediaRecorder.isTypeSupported(type));
+}
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error ?? new Error("Could not read recording"));
+    reader.onloadend = () => {
+      const result = String(reader.result ?? "");
+      const comma = result.indexOf(",");
+      resolve(comma >= 0 ? result.slice(comma + 1) : result);
+    };
+    reader.readAsDataURL(blob);
+  });
 }
 
 export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>(
-  function VoiceRecorder({ onSendAudio, onSendText, isProcessing }, ref) {
-  const [isRecording, setIsRecording] = useState(false);
-  const [textMode, setTextMode] = useState(false);
-  const [text, setText] = useState("");
-  const [recordingDuration, setRecordingDuration] = useState(0);
+  function VoiceRecorder(
+    {
+      onSendAudio,
+      onSendText,
+      isProcessing,
+      mode,
+      wakeWord,
+      onModeChange,
+      onWakeWordChange,
+      onSessionChange,
+    },
+    ref,
+  ) {
+    const [sessionActive, setSessionActive] = useState(false);
+    const [turnState, setTurnState] = useState<TurnState>("idle");
+    const [textMode, setTextMode] = useState(false);
+    const [text, setText] = useState("");
+    const [recordingDuration, setRecordingDuration] = useState(0);
+    const [micError, setMicError] = useState<string | null>(null);
 
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
-  const timerRef = useRef<number | null>(null);
+    const sessionActiveRef = useRef(false);
+    const turnStateRef = useRef<TurnState>("idle");
+    const isProcessingRef = useRef(isProcessing);
+    const streamRef = useRef<MediaStream | null>(null);
+    const recorderRef = useRef<MediaRecorder | null>(null);
+    const chunksRef = useRef<Blob[]>([]);
+    const audioContextRef = useRef<AudioContext | null>(null);
+    const analyserRef = useRef<AnalyserNode | null>(null);
+    const sampleBufferRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
+    const animationFrameRef = useRef<number | null>(null);
+    const speechStartedAtRef = useRef<number | null>(null);
+    const silenceStartedAtRef = useRef<number | null>(null);
+    const turnStartedAtRef = useRef<number | null>(null);
+    const discardTurnRef = useRef(false);
+    const durationTimerRef = useRef<number | null>(null);
+    const wakeRecognitionRef = useRef<WakeRecognition | null>(null);
+    const wakeRestartTimerRef = useRef<number | null>(null);
+    const wakeArmedRef = useRef(mode === "always");
+    const wakeWordRef = useRef(wakeWord);
+    const modeRef = useRef(mode);
+    const onSessionChangeRef = useRef(onSessionChange);
 
-  useEffect(() => {
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
-        mediaRecorderRef.current.stop();
+    useEffect(() => {
+      wakeWordRef.current = wakeWord;
+      modeRef.current = mode;
+      onSessionChangeRef.current = onSessionChange;
+    }, [mode, onSessionChange, wakeWord]);
+
+    useEffect(() => {
+      isProcessingRef.current = isProcessing;
+      if (isProcessing) {
+        stopWakeRecognition();
+        if (turnStateRef.current !== "processing") {
+          turnStateRef.current = "processing";
+          setTurnState("processing");
+        }
+      }
+    }, [isProcessing]);
+
+    useEffect(() => {
+      modeRef.current = mode;
+      if (!sessionActiveRef.current) return;
+      if (mode === "always") {
+        wakeArmedRef.current = true;
+        stopWakeRecognition();
+        if (!isProcessingRef.current && !recorderRef.current) setTurn("listening");
+      } else {
+        wakeArmedRef.current = false;
+        if (!isProcessingRef.current && !recorderRef.current) {
+          setTurn("listening");
+          startWakeRecognition();
+        }
+      }
+    }, [mode]);
+
+    const setTurn = (next: TurnState) => {
+      turnStateRef.current = next;
+      setTurnState(next);
+    };
+
+    const stopMonitor = () => {
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
       }
     };
-  }, []);
 
-  const formatTime = (seconds: number) => {
-    const m = Math.floor(seconds / 60);
-    const s = seconds % 60;
-    return `${m}:${s.toString().padStart(2, '0')}`;
-  };
+    const stopWakeRecognition = () => {
+      if (wakeRestartTimerRef.current !== null) {
+        window.clearTimeout(wakeRestartTimerRef.current);
+        wakeRestartTimerRef.current = null;
+      }
+      const recognition = wakeRecognitionRef.current;
+      wakeRecognitionRef.current = null;
+      if (recognition) {
+        try { recognition.onend = null; recognition.abort(); } catch { /* already stopped */ }
+      }
+    };
 
-  const startRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
-      chunksRef.current = [];
-
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data);
+    const wakeRecognitionConstructor = () => {
+      if (typeof window === "undefined") return undefined;
+      const browserWindow = window as typeof window & {
+        SpeechRecognition?: WakeRecognitionConstructor;
+        webkitSpeechRecognition?: WakeRecognitionConstructor;
       };
+      return browserWindow.SpeechRecognition ?? browserWindow.webkitSpeechRecognition;
+    };
 
-      mediaRecorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: mediaRecorder.mimeType });
-        const reader = new FileReader();
-        reader.readAsDataURL(blob);
-        reader.onloadend = () => {
-          const base64data = reader.result as string;
-          const base64 = base64data.split(",")[1];
-          onSendAudio(base64, blob.type);
-        };
-        stream.getTracks().forEach((track) => track.stop());
+    const startWakeRecognition = () => {
+      if (!sessionActiveRef.current || modeRef.current !== "wake" || isProcessingRef.current || wakeRecognitionRef.current) return;
+      const Recognition = wakeRecognitionConstructor();
+      if (!Recognition) return;
+
+      const recognition = new Recognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = "en-US";
+      recognition.onresult = (event) => {
+        const configuredWakeWord = wakeWordRef.current.trim().toLocaleLowerCase() || "aura";
+        for (let index = 0; index < event.results.length; index += 1) {
+          const transcript = event.results[index]?.[0]?.transcript?.trim().toLocaleLowerCase() || "";
+          if (transcript.includes(configuredWakeWord)) {
+            wakeArmedRef.current = true;
+            stopWakeRecognition();
+            setTurn("listening");
+            break;
+          }
+        }
       };
+      recognition.onerror = (event) => {
+        if (event.error !== "not-allowed" && event.error !== "service-not-allowed") {
+          wakeRestartTimerRef.current = window.setTimeout(() => {
+            wakeRecognitionRef.current = null;
+            startWakeRecognition();
+          }, 500);
+        }
+      };
+      recognition.onend = () => {
+        wakeRecognitionRef.current = null;
+        if (sessionActiveRef.current && modeRef.current === "wake" && !isProcessingRef.current) {
+          wakeRestartTimerRef.current = window.setTimeout(startWakeRecognition, 300);
+        }
+      };
+      wakeRecognitionRef.current = recognition;
+      try { recognition.start(); } catch { wakeRecognitionRef.current = null; }
+    };
 
-      mediaRecorder.start();
-      setIsRecording(true);
+    const releaseMicrophone = () => {
+      stopWakeRecognition();
+      stopMonitor();
+      if (durationTimerRef.current !== null) {
+        window.clearInterval(durationTimerRef.current);
+        durationTimerRef.current = null;
+      }
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+      analyserRef.current?.disconnect();
+      analyserRef.current = null;
+      const context = audioContextRef.current;
+      audioContextRef.current = null;
+      if (context && context.state !== "closed") {
+        void context.close().catch(() => undefined);
+      }
+    };
+
+    const stopTurn = (send: boolean) => {
+      const recorder = recorderRef.current;
+      if (!recorder || recorder.state !== "recording") return;
+      discardTurnRef.current = !send;
+      recorder.stop();
+      recorderRef.current = null;
+      speechStartedAtRef.current = null;
+      silenceStartedAtRef.current = null;
+      turnStartedAtRef.current = null;
+      setTurn(send ? "processing" : sessionActiveRef.current ? "listening" : "idle");
       setRecordingDuration(0);
+    };
 
-      timerRef.current = window.setInterval(() => {
-        setRecordingDuration((prev) => prev + 1);
+    const beginTurn = () => {
+      if (!sessionActiveRef.current || isProcessingRef.current || recorderRef.current) return;
+      if (modeRef.current === "wake" && !wakeArmedRef.current) return;
+      const stream = streamRef.current;
+      if (!stream) return;
+
+      const mimeType = supportedMimeType();
+      let recorder: MediaRecorder;
+      try {
+        recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      } catch (error) {
+        console.error("Could not create audio recorder", error);
+        setMicError("This browser could not start a live recording.");
+        return;
+      }
+
+      recorderRef.current = recorder;
+      chunksRef.current = [];
+      discardTurnRef.current = false;
+      turnStartedAtRef.current = performance.now();
+      setRecordingDuration(0);
+      setTurn("recording");
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) chunksRef.current.push(event.data);
+      };
+
+      recorder.onstop = () => {
+        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || mimeType || "audio/webm" });
+        const shouldSend = !discardTurnRef.current && sessionActiveRef.current && blob.size > 0;
+        chunksRef.current = [];
+
+        if (!shouldSend) {
+          if (sessionActiveRef.current && !isProcessingRef.current) setTurn("listening");
+          return;
+        }
+        if (modeRef.current === "wake") wakeArmedRef.current = false;
+
+        void (async () => {
+          try {
+            const base64 = await blobToBase64(blob);
+            await onSendAudio(base64, blob.type || mimeType || "audio/webm");
+          } catch (error) {
+            console.error("Failed to send live voice turn", error);
+            setMicError("I couldn't send that turn. Please try again.");
+          } finally {
+            if (sessionActiveRef.current && !isProcessingRef.current) setTurn("listening");
+          }
+        })();
+      };
+
+      recorder.start();
+      if (durationTimerRef.current !== null) window.clearInterval(durationTimerRef.current);
+      durationTimerRef.current = window.setInterval(() => {
+        setRecordingDuration((value) => value + 1);
       }, 1000);
-    } catch (err) {
-      console.error("Error accessing microphone:", err);
-      alert("Could not access microphone. Please check permissions or use text mode.");
-    }
-  };
+    };
 
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
-      if (timerRef.current) clearInterval(timerRef.current);
-    }
-  };
+    const monitor = () => {
+      if (!sessionActiveRef.current) return;
+      const analyser = analyserRef.current;
+      if (!analyser) return;
 
-  useImperativeHandle(ref, () => ({ startRecording, stopRecording }));
+      if (!sampleBufferRef.current || sampleBufferRef.current.length !== analyser.fftSize) {
+        sampleBufferRef.current = new Uint8Array(new ArrayBuffer(analyser.fftSize));
+      }
+      const sampleBuffer = sampleBufferRef.current;
+      analyser.getByteTimeDomainData(sampleBuffer);
 
-  const handleTextSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!text.trim() || isProcessing) return;
-    onSendText(text.trim());
-    setText("");
-  };
+      let sum = 0;
+      for (const value of sampleBuffer) {
+        const normalized = (value - 128) / 128;
+        sum += normalized * normalized;
+      }
+      const level = Math.sqrt(sum / sampleBuffer.length);
+      const now = performance.now();
+      const recorder = recorderRef.current;
 
-  return (
-    <div className="w-full max-w-3xl mx-auto flex flex-col items-center gap-4">
-      {textMode ? (
-        <form onSubmit={handleTextSubmit} className="w-full flex gap-2 items-end">
-          <textarea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder="Type your message..."
-            className="flex-1 min-h-[60px] max-h-[200px] resize-y bg-card border border-input rounded-2xl px-4 py-3 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                handleTextSubmit(e);
-              }
-            }}
-            disabled={isProcessing}
-          />
-          <div className="flex flex-col gap-2">
-            <Button
-              type="submit"
-              size="icon"
-              className="h-12 w-12 rounded-full rounded-br-md shrink-0 bg-primary text-primary-foreground hover:opacity-90"
-              disabled={!text.trim() || isProcessing}
-            >
-              {isProcessing ? (
-                <Loader2 className="h-5 w-5 animate-spin" />
-              ) : (
-                <Send className="h-5 w-5 ml-1" />
-              )}
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="text-xs h-8 text-muted-foreground hover:text-foreground"
-              onClick={() => setTextMode(false)}
-            >
-              Voice
-            </Button>
-          </div>
-        </form>
-      ) : (
-        <div className="flex flex-col items-center gap-6 w-full">
-          <div className="relative">
-            {isRecording && (
-              <>
-                <div className="absolute inset-0 bg-primary/20 rounded-full scale-[2] animate-pulse pointer-events-none" />
-                <div
-                  className="absolute inset-0 bg-primary/30 rounded-full scale-[1.5] animate-ping pointer-events-none"
-                  style={{ animationDuration: "3s" }}
-                />
-              </>
-            )}
+      if (!isProcessingRef.current && turnStateRef.current === "listening" && !recorder) {
+        if (level >= START_THRESHOLD) {
+          speechStartedAtRef.current ??= now;
+          if (now - speechStartedAtRef.current >= START_HOLD_MS) beginTurn();
+        } else {
+          speechStartedAtRef.current = null;
+        }
+      } else if (!isProcessingRef.current && turnStateRef.current === "recording" && recorder) {
+        const turnStartedAt = turnStartedAtRef.current ?? now;
+        if (level < SILENCE_THRESHOLD) {
+          silenceStartedAtRef.current ??= now;
+          const hasMinimumLength = now - turnStartedAt >= MIN_TURN_MS;
+          const heldLongEnough = now - silenceStartedAtRef.current >= SILENCE_HOLD_MS;
+          const reachedMaximum = now - turnStartedAt >= MAX_TURN_MS;
+          if ((hasMinimumLength && heldLongEnough) || reachedMaximum) stopTurn(true);
+        } else {
+          silenceStartedAtRef.current = null;
+        }
+      }
 
-            <button
-              onClick={isRecording ? stopRecording : startRecording}
+      animationFrameRef.current = requestAnimationFrame(monitor);
+    };
+
+    const startRecording = async () => {
+      if (sessionActiveRef.current || isProcessingRef.current) return;
+      setMicError(null);
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
+        const AudioContextClass = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        if (!AudioContextClass) throw new Error("AudioContext unavailable");
+        const context = new AudioContextClass();
+        await context.resume();
+        const source = context.createMediaStreamSource(stream);
+        const analyser = context.createAnalyser();
+        analyser.fftSize = 1024;
+        analyser.smoothingTimeConstant = 0.25;
+        source.connect(analyser);
+
+        streamRef.current = stream;
+        audioContextRef.current = context;
+        analyserRef.current = analyser;
+        sessionActiveRef.current = true;
+        setSessionActive(true);
+        onSessionChangeRef.current?.(true);
+        wakeArmedRef.current = modeRef.current === "always";
+        setTurn("listening");
+        if (modeRef.current === "wake") startWakeRecognition();
+        animationFrameRef.current = requestAnimationFrame(monitor);
+      } catch (error) {
+        console.error("Error accessing microphone:", error);
+        releaseMicrophone();
+        setMicError("Microphone access is needed for a live conversation. Check your browser permission and try again.");
+      }
+    };
+
+    const stopRecording = () => {
+      const recorder = recorderRef.current;
+      if (recorder?.state === "recording") stopTurn(false);
+      sessionActiveRef.current = false;
+      discardTurnRef.current = true;
+      setSessionActive(false);
+      onSessionChangeRef.current?.(false);
+      setTurn("idle");
+      releaseMicrophone();
+      setRecordingDuration(0);
+    };
+
+    const resumeListening = () => {
+      if (!sessionActiveRef.current) return;
+      isProcessingRef.current = false;
+      wakeArmedRef.current = modeRef.current === "always";
+      setTurn("listening");
+      if (modeRef.current === "wake") startWakeRecognition();
+      if (animationFrameRef.current === null) animationFrameRef.current = requestAnimationFrame(monitor);
+    };
+
+    useImperativeHandle(ref, () => ({ startRecording, resumeListening, stopRecording }));
+
+    useEffect(() => {
+      return () => {
+        sessionActiveRef.current = false;
+        discardTurnRef.current = true;
+        onSessionChangeRef.current?.(false);
+        if (recorderRef.current?.state === "recording") recorderRef.current.stop();
+        releaseMicrophone();
+      };
+    }, []);
+
+    const formatTime = (seconds: number) => {
+      const minutes = Math.floor(seconds / 60);
+      const remaining = seconds % 60;
+      return `${minutes}:${remaining.toString().padStart(2, "0")}`;
+    };
+
+    const handleTextSubmit = (event: React.FormEvent) => {
+      event.preventDefault();
+      if (!text.trim() || isProcessing) return;
+      void onSendText(text.trim());
+      setText("");
+    };
+
+    return (
+      <div className="w-full max-w-3xl mx-auto flex flex-col items-center gap-4">
+        {textMode ? (
+          <form onSubmit={handleTextSubmit} className="w-full flex gap-2 items-end">
+            <textarea
+              value={text}
+              onChange={(event) => setText(event.target.value)}
+              placeholder="Type your message..."
+              className="flex-1 min-h-[60px] max-h-[200px] resize-y bg-card border border-input rounded-2xl px-4 py-3 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  handleTextSubmit(event);
+                }
+              }}
               disabled={isProcessing}
-              className={cn(
-                "relative z-10 flex items-center justify-center h-24 w-24 rounded-full transition-all duration-300 shadow-lg",
-                isRecording
-                  ? "bg-destructive text-destructive-foreground scale-110"
-                  : isProcessing
-                  ? "bg-card border-2 border-border text-muted-foreground cursor-not-allowed"
-                  : "bg-primary text-primary-foreground hover:scale-105 hover:shadow-xl"
-              )}
-            >
-              {isProcessing ? (
-                <Loader2 className="h-10 w-10 animate-spin" />
-              ) : isRecording ? (
-                <Square className="h-8 w-8 fill-current" />
-              ) : (
-                <Mic className="h-10 w-10" />
-              )}
-            </button>
-          </div>
-
-          <div className="flex flex-col items-center h-8">
-            {isRecording ? (
-              <span className="font-mono text-xl text-primary font-medium tracking-widest animate-pulse">
-                {formatTime(recordingDuration)}
-              </span>
-            ) : isProcessing ? (
-              <span className="text-muted-foreground text-sm font-medium animate-pulse">
-                Listening & responding...
-              </span>
+            />
+            <div className="flex flex-col gap-2">
+              <Button
+                type="submit"
+                size="icon"
+                className="h-12 w-12 rounded-full rounded-br-md shrink-0 bg-primary text-primary-foreground hover:opacity-90"
+                disabled={!text.trim() || isProcessing}
+              >
+                {isProcessing ? <Loader2 className="h-5 w-5 animate-spin" /> : <Send className="h-5 w-5 ml-1" />}
+              </Button>
+              <Button type="button" variant="ghost" size="sm" className="text-xs h-8 text-muted-foreground hover:text-foreground" onClick={() => setTextMode(false)}>
+                Voice
+              </Button>
+            </div>
+          </form>
+        ) : (
+          <div className="flex flex-col items-center gap-5 w-full">
+            {!sessionActive ? (
+              <div className="w-full max-w-md rounded-2xl border border-border/70 bg-card/70 p-4 space-y-4 shadow-sm">
+                <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                  <Radio className="h-4 w-4 text-primary" />
+                  <span>How should Aura listen?</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 rounded-xl bg-secondary/60 p-1">
+                  <button
+                    type="button"
+                    onClick={() => onModeChange("always")}
+                    className={cn(
+                      "rounded-lg px-3 py-2 text-sm transition-colors",
+                      mode === "always" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    Always live
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onModeChange("wake")}
+                    className={cn(
+                      "rounded-lg px-3 py-2 text-sm transition-colors",
+                      mode === "wake" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    Say my name first
+                  </button>
+                </div>
+                {mode === "wake" && (
+                  <div className="space-y-2">
+                    <label htmlFor="wake-word" className="text-xs font-medium text-muted-foreground">Wake name</label>
+                    <Input
+                      id="wake-word"
+                      value={wakeWord}
+                      onChange={(event) => onWakeWordChange(event.target.value)}
+                      placeholder="Aura"
+                      maxLength={32}
+                      className="h-10 bg-background"
+                    />
+                    <p className="text-[11px] text-muted-foreground">Start a turn with “{wakeWord.trim() || "Aura"}” when you want a reply.</p>
+                  </div>
+                )}
+              </div>
             ) : (
-              <span className="text-muted-foreground text-sm">Tap to speak</span>
+              <div className="w-full max-w-md rounded-2xl border border-primary/25 bg-primary/5 px-4 py-3 shadow-sm" aria-live="polite">
+                <div className="flex items-center gap-3">
+                  <div className={cn("h-3 w-3 rounded-full", turnState === "recording" ? "bg-destructive animate-pulse" : turnState === "processing" ? "bg-amber-500 animate-pulse" : "bg-emerald-500 animate-pulse")} />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-foreground">
+                      {turnState === "recording" ? "I’m listening…" : turnState === "processing" ? "Aura is thinking…" : mode === "wake" ? `Say “${wakeWord.trim() || "Aura"}” when you’re ready` : "Listening for you"}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {turnState === "recording" ? formatTime(recordingDuration) : "You can set your phone down. No tap is needed between turns."}
+                    </p>
+                  </div>
+                  {turnState === "processing" ? <Volume2 className="h-4 w-4 text-amber-600 shrink-0" /> : <Mic className="h-4 w-4 text-primary shrink-0" />}
+                </div>
+              </div>
             )}
-          </div>
 
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-xs text-muted-foreground hover:text-foreground mt-[-8px]"
-            onClick={() => setTextMode(true)}
-            disabled={isRecording || isProcessing}
-          >
-            Or type a message
-          </Button>
-        </div>
-      )}
-    </div>
-  );
-});
+            <div className="relative">
+              {sessionActive && turnState !== "processing" && (
+                <>
+                  <div className="absolute inset-0 bg-primary/20 rounded-full scale-[2] animate-pulse pointer-events-none" />
+                  <div className="absolute inset-0 bg-primary/30 rounded-full scale-[1.5] animate-ping pointer-events-none" style={{ animationDuration: "3s" }} />
+                </>
+              )}
+              <button
+                onClick={sessionActive ? stopRecording : startRecording}
+                disabled={!sessionActive && isProcessing}
+                aria-label={sessionActive ? "End live conversation" : "Start live conversation"}
+                className={cn(
+                  "relative z-10 flex items-center justify-center h-24 w-24 rounded-full transition-all duration-300 shadow-lg",
+                  sessionActive ? "bg-destructive text-destructive-foreground scale-110" : isProcessing ? "bg-card border-2 border-border text-muted-foreground cursor-not-allowed" : "bg-primary text-primary-foreground hover:scale-105 hover:shadow-xl",
+                )}
+              >
+                {sessionActive ? <Square className="h-8 w-8 fill-current" /> : isProcessing ? <Loader2 className="h-10 w-10 animate-spin" /> : <Mic className="h-10 w-10" />}
+              </button>
+            </div>
+
+            <div className="flex flex-col items-center gap-1 text-center min-h-10">
+              <span className={cn("text-sm font-medium", sessionActive ? "text-primary" : "text-muted-foreground")}>
+                {sessionActive ? "End live conversation" : "Start live conversation"}
+              </span>
+              {sessionActive && (
+                <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                  <ShieldCheck className="h-3 w-3" /> Microphone is on until you end the session
+                </span>
+              )}
+              {micError && <span className="max-w-sm text-xs text-destructive">{micError}</span>}
+            </div>
+
+            <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-foreground" onClick={() => setTextMode(true)} disabled={sessionActive || isProcessing}>
+              Or type a message
+            </Button>
+          </div>
+        )}
+      </div>
+    );
+  },
+);
