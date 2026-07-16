@@ -5,14 +5,11 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import type { MessageRole } from './messageRole';
 
-export interface Message {
+export interface VoiceProfile {
   id: number;
-  conversationId: number;
-  role: MessageRole;
-  content: string;
+  name: string;
   /** @nullable */
-  speakerName?: string | null;
+  lastHeardAt?: Date | null;
   createdAt: Date;
 }

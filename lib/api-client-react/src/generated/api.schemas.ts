@@ -28,6 +28,7 @@ export interface Stats {
   conversationCount: number;
   messageCount: number;
   memoryCount: number;
+  voiceProfileCount: number;
   /** @nullable */
   lastActiveAt: string | null;
 }
@@ -57,6 +58,8 @@ export interface Message {
   conversationId: number;
   role: MessageRole;
   content: string;
+  /** @nullable */
+  speakerName?: string | null;
   createdAt: string;
 }
 
@@ -83,6 +86,13 @@ export interface VoiceMessageExchange {
   /** Base64-encoded synthesized speech audio of the reply */
   audioBase64: string;
   audioMimeType: string;
+  /**
+     * Name of the recognised speaker, or null if unrecognised
+     * @nullable
+     */
+  speakerName?: string | null;
+  /** True if a new voice profile was automatically created from a self-introduction */
+  autoEnrolled?: boolean;
 }
 
 export interface Memory {
@@ -91,5 +101,25 @@ export interface Memory {
   /** @nullable */
   category: string | null;
   createdAt: string;
+}
+
+export interface VoiceProfile {
+  id: number;
+  name: string;
+  /** @nullable */
+  lastHeardAt?: string | null;
+  createdAt: string;
+}
+
+export interface VoiceProfileInput {
+  /** @minLength 1 */
+  name: string;
+  audioBase64: string;
+  mimeType: string;
+}
+
+export interface VoiceProfileUpdate {
+  /** @minLength 1 */
+  name: string;
 }
 

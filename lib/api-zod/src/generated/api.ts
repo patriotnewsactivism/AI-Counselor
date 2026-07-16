@@ -56,6 +56,7 @@ export const GetStatsResponse = zod.object({
   "conversationCount": zod.number(),
   "messageCount": zod.number(),
   "memoryCount": zod.number(),
+  "voiceProfileCount": zod.number(),
   "lastActiveAt": zod.coerce.date().nullable()
 })
 
@@ -124,6 +125,7 @@ export const ListMessagesResponseItem = zod.object({
   "conversationId": zod.number(),
   "role": zod.enum(['user', 'assistant']),
   "content": zod.string(),
+  "speakerName": zod.string().nullish(),
   "createdAt": zod.coerce.date()
 })
 export const ListMessagesResponse = zod.array(ListMessagesResponseItem)
@@ -149,6 +151,7 @@ export const SendMessageResponse = zod.object({
   "conversationId": zod.number(),
   "role": zod.enum(['user', 'assistant']),
   "content": zod.string(),
+  "speakerName": zod.string().nullish(),
   "createdAt": zod.coerce.date()
 }),
   "assistantMessage": zod.object({
@@ -156,13 +159,14 @@ export const SendMessageResponse = zod.object({
   "conversationId": zod.number(),
   "role": zod.enum(['user', 'assistant']),
   "content": zod.string(),
+  "speakerName": zod.string().nullish(),
   "createdAt": zod.coerce.date()
 })
 })
 
 
 /**
- * Accepts a base64-encoded audio recording, transcribes it, gets the companion's reply, and synthesizes that reply as speech.
+ * Accepts a base64-encoded audio recording, transcribes it, identifies the speaker against enrolled voice profiles if any, gets the companion's reply, and synthesizes that reply as speech.
  * @summary Send a voice recording and get a spoken reply back
  */
 export const SendVoiceMessageParams = zod.object({
@@ -180,6 +184,7 @@ export const SendVoiceMessageResponse = zod.object({
   "conversationId": zod.number(),
   "role": zod.enum(['user', 'assistant']),
   "content": zod.string(),
+  "speakerName": zod.string().nullish(),
   "createdAt": zod.coerce.date()
 }),
   "assistantMessage": zod.object({
@@ -187,10 +192,13 @@ export const SendVoiceMessageResponse = zod.object({
   "conversationId": zod.number(),
   "role": zod.enum(['user', 'assistant']),
   "content": zod.string(),
+  "speakerName": zod.string().nullish(),
   "createdAt": zod.coerce.date()
 }),
   "audioBase64": zod.string().describe('Base64-encoded synthesized speech audio of the reply'),
-  "audioMimeType": zod.string()
+  "audioMimeType": zod.string(),
+  "speakerName": zod.string().nullish().describe('Name of the recognised speaker, or null if unrecognised'),
+  "autoEnrolled": zod.boolean().optional().describe('True if a new voice profile was automatically created from a self-introduction')
 })
 
 
@@ -214,5 +222,69 @@ export const DeleteMemoryParams = zod.object({
 })
 
 export const DeleteMemoryResponse = zod.void()
+
+
+/**
+ * @summary List enrolled voice profiles for the current account
+ */
+export const ListVoiceProfilesResponseItem = zod.object({
+  "id": zod.number(),
+  "name": zod.string(),
+  "lastHeardAt": zod.coerce.date().nullish(),
+  "createdAt": zod.coerce.date()
+})
+export const ListVoiceProfilesResponse = zod.array(ListVoiceProfilesResponseItem)
+
+
+/**
+ * @summary Manually enroll a new voice profile
+ */
+
+
+
+export const EnrollVoiceProfileBody = zod.object({
+  "name": zod.string().min(1),
+  "audioBase64": zod.string(),
+  "mimeType": zod.string()
+})
+
+export const EnrollVoiceProfileResponse = zod.object({
+  "id": zod.number(),
+  "name": zod.string(),
+  "lastHeardAt": zod.coerce.date().nullish(),
+  "createdAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Rename a voice profile
+ */
+export const UpdateVoiceProfileParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+
+
+
+export const UpdateVoiceProfileBody = zod.object({
+  "name": zod.string().min(1)
+})
+
+export const UpdateVoiceProfileResponse = zod.object({
+  "id": zod.number(),
+  "name": zod.string(),
+  "lastHeardAt": zod.coerce.date().nullish(),
+  "createdAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Remove an enrolled voice profile
+ */
+export const DeleteVoiceProfileParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const DeleteVoiceProfileResponse = zod.void()
 
 

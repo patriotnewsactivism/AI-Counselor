@@ -18,6 +18,8 @@ tags:
     description: Remembered facts about the user
   - name: stats
     description: Summary stats
+  - name: voice-profiles
+    description: Persistent voice recognition profiles
 paths:
   /healthz:
     get:
@@ -191,7 +193,8 @@ paths:
       tags: [conversations]
       summary: Send a voice recording and get a spoken reply back
       description: >
-        Accepts a base64-encoded audio recording, transcribes it, gets the
+        Accepts a base64-encoded audio recording, transcribes it, identifies
+        the speaker against enrolled voice profiles if any, gets the
         companion's reply, and synthesizes that reply as speech.
       parameters:
         - name: id
@@ -244,6 +247,78 @@ paths:
           description: Deleted
         "404":
           description: Not found
+  /voice-profiles:
+    get:
+      operationId: listVoiceProfiles
+      tags: [voice-profiles]
+      summary: List enrolled voice profiles for the current account
+      responses:
+        "200":
+          description: List of voice profiles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/VoiceProfile"
+    post:
+      operationId: enrollVoiceProfile
+      tags: [voice-profiles]
+      summary: Manually enroll a new voice profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VoiceProfileInput"
+      responses:
+        "201":
+          description: Enrolled voice profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VoiceProfile"
+  /voice-profiles/{id}:
+    patch:
+      operationId: updateVoiceProfile
+      tags: [voice-profiles]
+      summary: Rename a voice profile
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VoiceProfileUpdate"
+      responses:
+        "200":
+          description: Updated voice profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VoiceProfile"
+        "404":
+          description: Not found
+    delete:
+      operationId: deleteVoiceProfile
+      tags: [voice-profiles]
+      summary: Remove an enrolled voice profile
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
 components:
   schemas:
     HealthStatus:
@@ -270,11 +345,12 @@ components:
     Stats:
       type: object
       required:
-        [conversationCount, messageCount, memoryCount, lastActiveAt]
+        [conversationCount, messageCount, memoryCount, voiceProfileCount, lastActiveAt]
       properties:
         conversationCount: { type: integer }
         messageCount: { type: integer }
         memoryCount: { type: integer }
+        voiceProfileCount: { type: integer }
         lastActiveAt: { type: ["string", "null"], format: date-time }
     Conversation:
       type: object
@@ -296,6 +372,7 @@ components:
         conversationId: { type: integer }
         role: { type: string, enum: [user, assistant] }
         content: { type: string }
+        speakerName: { type: ["string", "null"] }
         createdAt: { type: string, format: date-time }
     MessageInput:
       type: object
@@ -324,6 +401,12 @@ components:
           type: string
           description: Base64-encoded synthesized speech audio of the reply
         audioMimeType: { type: string }
+        speakerName:
+          type: ["string", "null"]
+          description: Name of the recognised speaker, or null if unrecognised
+        autoEnrolled:
+          type: boolean
+          description: True if a new voice profile was automatically created from a self-introduction
     Memory:
       type: object
       required: [id, content, category, createdAt]
@@ -332,4 +415,23 @@ components:
         content: { type: string }
         category: { type: ["string", "null"] }
         createdAt: { type: string, format: date-time }
-
+    VoiceProfile:
+      type: object
+      required: [id, name, createdAt]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        lastHeardAt: { type: ["string", "null"], format: date-time }
+        createdAt: { type: string, format: date-time }
+    VoiceProfileInput:
+      type: object
+      required: [name, audioBase64, mimeType]
+      properties:
+        name: { type: string, minLength: 1 }
+        audioBase64: { type: string }
+        mimeType: { type: string }
+    VoiceProfileUpdate:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1 }

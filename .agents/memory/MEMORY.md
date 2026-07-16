@@ -1,3 +1,5 @@
 - [Deepgram SDK v5](deepgram-sdk-v5.md) — v5 is a completely different fern-generated API from v3/older docs; always check installed `.d.ts` files, never trust memory or old examples.
 - [esbuild external globs vs workspace lib packages](esbuild-external-globs.md) — a broad `external` glob in api-server's build.mjs can silently break workspace libs that wrap the globbed package.
 - [Own-API-key AI/voice architecture](own-api-key-ai-services.md) — when Replit's AI proxy is blocked, wrap the user's own key + SDK in a thin `lib/<service>` workspace package rather than calling the SDK directly from routes.
+- [Voice profile feature architecture](voice-profiles.md) — multi-speaker voice recognition via Gemini multimodal audio (best-effort, not biometric-grade); auto-enrollment on self-introduction; voiceProfilesTable scoped to userId.
+- [Replit-managed Clerk limitations](clerk-managed-limits.md) — MFA and session inactivity timeout are not supported by Replit-managed Clerk (confirmed via searchReplitDocs July 2026).

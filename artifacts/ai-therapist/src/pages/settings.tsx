@@ -6,13 +6,14 @@ import {
   getGetProfileQueryKey
 } from "@workspace/api-client-react";
 import { format } from "date-fns";
-import { Settings, Save, User, MessageSquare, BookHeart, Calendar } from "lucide-react";
+import { Settings, Save, User, MessageSquare, BookHeart, Calendar, Mic } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useQueryClient } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
+import { VoiceProfilesSection } from "@/components/settings/voice-profiles";
 
 export default function SettingsPage() {
   const { data: profile, isLoading: isLoadingProfile } = useGetProfile();
@@ -121,11 +122,11 @@ export default function SettingsPage() {
             <h2 className="font-serif text-xl text-foreground mb-4">Your Journey</h2>
             
             {isLoadingStats ? (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                {[1,2,3,4].map(i => <Skeleton key={i} className="h-24 rounded-2xl" />)}
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                {[1,2,3,4,5].map(i => <Skeleton key={i} className="h-24 rounded-2xl" />)}
               </div>
             ) : stats ? (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                 <StatCard 
                   icon={<MessageSquare className="h-5 w-5 text-primary" />}
                   label="Conversations"
@@ -142,6 +143,11 @@ export default function SettingsPage() {
                   value={stats.memoryCount.toString()}
                 />
                 <StatCard 
+                  icon={<Mic className="h-5 w-5 text-primary" />}
+                  label="Voices"
+                  value={stats.voiceProfileCount.toString()}
+                />
+                <StatCard 
                   icon={<Calendar className="h-5 w-5 text-primary" />}
                   label="Last Active"
                   value={stats.lastActiveAt ? format(new Date(stats.lastActiveAt), "MMM d") : "Never"}
@@ -149,6 +155,8 @@ export default function SettingsPage() {
               </div>
             ) : null}
           </section>
+
+          <VoiceProfilesSection />
 
           <section className="pt-8 border-t border-border mt-4">
             <p className="text-xs text-muted-foreground text-center">

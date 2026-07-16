@@ -11,6 +11,8 @@ export const messagesTable = pgTable("messages", {
   role: text("role", { enum: ["user", "assistant"] }).notNull(),
   content: text("content").notNull(),
   audioMimeType: text("audio_mime_type"),
+  /** Set on user-role voice messages when the speaker was identified */
+  speakerName: text("speaker_name"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

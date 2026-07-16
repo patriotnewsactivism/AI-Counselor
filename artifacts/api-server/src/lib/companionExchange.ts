@@ -22,6 +22,8 @@ export async function runCompanionExchange(params: {
   profile: Profile;
   userContent: string;
   audioMimeType?: string;
+  /** Voice-identified speaker name — null means account owner / unknown */
+  speakerName?: string | null;
 }): Promise<{ userMessage: Message; assistantMessage: Message }> {
   const { conversationId, profile, userContent } = params;
 
@@ -48,6 +50,7 @@ export async function runCompanionExchange(params: {
       role: "user",
       content: userContent,
       audioMimeType: params.audioMimeType,
+      speakerName: params.speakerName ?? null,
     })
     .returning();
 
@@ -57,6 +60,7 @@ export async function runCompanionExchange(params: {
     memories: existingMemories.map((m) => m.content),
     history,
     userMessage: userContent,
+    speakerName: params.speakerName ?? null,
   });
 
   const [assistantMessage] = await db

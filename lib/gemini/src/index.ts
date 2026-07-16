@@ -2,6 +2,7 @@ import { ai, GEMINI_MODEL } from "./client";
 import { buildSystemInstruction, MEMORY_EXTRACTION_INSTRUCTION } from "./persona";
 
 export { ai, GEMINI_MODEL };
+export { identifyOrEnrollSpeaker, type EnrolledProfile, type SpeakerResult } from "./speaker";
 
 export interface ChatTurn {
   role: "user" | "assistant";
@@ -14,6 +15,7 @@ export async function generateCompanionReply(params: {
   memories: string[];
   history: ChatTurn[];
   userMessage: string;
+  speakerName?: string | null;
 }): Promise<string> {
   const systemInstruction = buildSystemInstruction(params);
 

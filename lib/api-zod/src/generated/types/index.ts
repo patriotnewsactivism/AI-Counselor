@@ -19,3 +19,6 @@ export * from './profileUpdate';
 export * from './stats';
 export * from './voiceMessageExchange';
 export * from './voiceMessageInput';
+export * from './voiceProfile';
+export * from './voiceProfileInput';
+export * from './voiceProfileUpdate';

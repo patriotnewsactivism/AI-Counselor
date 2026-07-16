@@ -12,9 +12,10 @@ import { VoiceRecorder } from "@/components/companion/voice-recorder";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
-import { Loader2, User, Play, Square } from "lucide-react";
+import { Loader2, User, Play, Square, Mic } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { getListMessagesQueryKey, getListConversationsQueryKey, getGetConversationQueryKey } from "@workspace/api-client-react";
+import { useToast } from "@/hooks/use-toast";
 
 export default function CompanionPage() {
   const { id } = useParams<{ id?: string }>();
@@ -25,6 +26,7 @@ export default function CompanionPage() {
   const [isPlaying, setIsPlaying] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const { toast } = useToast();
 
   const isNew = !id;
   const conversationId = isNew ? null : parseInt(id, 10);
@@ -122,6 +124,13 @@ export default function CompanionPage() {
         data: { audioBase64, mimeType } 
       });
       
+      if (response.autoEnrolled && response.speakerName) {
+        toast({
+          title: "New voice recognized",
+          description: `I've learned ${response.speakerName}'s voice — I'll recognise them next time.`,
+        });
+      }
+
       // Play returned audio
       if (response.audioBase64 && response.audioMimeType) {
         const url = `data:${response.audioMimeType};base64,${response.audioBase64}`;
@@ -207,11 +216,19 @@ export default function CompanionPage() {
                   </div>
 
                   {isUser && (
-                    <Avatar className="h-8 w-8 mt-1 shrink-0 bg-transparent">
-                      <AvatarFallback className="bg-muted text-muted-foreground">
-                        <User className="h-4 w-4" />
-                      </AvatarFallback>
-                    </Avatar>
+                    <div className="flex flex-col items-end gap-1 mt-1 shrink-0">
+                      <Avatar className="h-8 w-8 bg-transparent">
+                        <AvatarFallback className="bg-muted text-muted-foreground">
+                          <User className="h-4 w-4" />
+                        </AvatarFallback>
+                      </Avatar>
+                      {msg.speakerName && (
+                        <div className="flex items-center gap-1 mt-1 text-[10px] text-muted-foreground font-medium px-1.5 py-0.5 bg-primary/10 text-primary rounded-full shrink-0">
+                          <Mic className="h-3 w-3" />
+                          <span>{msg.speakerName}</span>
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
               );

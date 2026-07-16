@@ -31,7 +31,10 @@ import type {
   ProfileUpdate,
   Stats,
   VoiceMessageExchange,
-  VoiceMessageInput
+  VoiceMessageInput,
+  VoiceProfile,
+  VoiceProfileInput,
+  VoiceProfileUpdate
 } from './api.schemas';
 
 import { customFetch } from '../custom-fetch';
@@ -818,7 +821,7 @@ export const getSendVoiceMessageUrl = (id: number,) => {
 }
 
 /**
- * Accepts a base64-encoded audio recording, transcribes it, gets the companion's reply, and synthesizes that reply as speech.
+ * Accepts a base64-encoded audio recording, transcribes it, identifies the speaker against enrolled voice profiles if any, gets the companion's reply, and synthesizes that reply as speech.
  * @summary Send a voice recording and get a spoken reply back
  */
 export const sendVoiceMessage = async (id: number,
@@ -1028,5 +1031,296 @@ export const useDeleteMemory = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getDeleteMemoryMutationOptions(options));
+    }
+
+export const getListVoiceProfilesUrl = () => {
+
+
+
+
+  return `/api/voice-profiles`
+}
+
+/**
+ * @summary List enrolled voice profiles for the current account
+ */
+export const listVoiceProfiles = async ( options?: RequestInit): Promise<VoiceProfile[]> => {
+
+  return customFetch<VoiceProfile[]>(getListVoiceProfilesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListVoiceProfilesQueryKey = () => {
+    return [
+    `/api/voice-profiles`
+    ] as const;
+    }
+
+
+export const getListVoiceProfilesQueryOptions = <TData = Awaited<ReturnType<typeof listVoiceProfiles>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listVoiceProfiles>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListVoiceProfilesQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listVoiceProfiles>>> = ({ signal }) => listVoiceProfiles({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listVoiceProfiles>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListVoiceProfilesQueryResult = NonNullable<Awaited<ReturnType<typeof listVoiceProfiles>>>
+export type ListVoiceProfilesQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List enrolled voice profiles for the current account
+ */
+
+export function useListVoiceProfiles<TData = Awaited<ReturnType<typeof listVoiceProfiles>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listVoiceProfiles>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListVoiceProfilesQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getEnrollVoiceProfileUrl = () => {
+
+
+
+
+  return `/api/voice-profiles`
+}
+
+/**
+ * @summary Manually enroll a new voice profile
+ */
+export const enrollVoiceProfile = async (voiceProfileInput: VoiceProfileInput, options?: RequestInit): Promise<VoiceProfile> => {
+
+  return customFetch<VoiceProfile>(getEnrollVoiceProfileUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(voiceProfileInput)
+  }
+);}
+
+
+
+
+
+export const getEnrollVoiceProfileMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof enrollVoiceProfile>>, TError,{data: BodyType<VoiceProfileInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof enrollVoiceProfile>>, TError,{data: BodyType<VoiceProfileInput>}, TContext> => {
+
+const mutationKey = ['enrollVoiceProfile'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof enrollVoiceProfile>>, {data: BodyType<VoiceProfileInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  enrollVoiceProfile(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type EnrollVoiceProfileMutationResult = NonNullable<Awaited<ReturnType<typeof enrollVoiceProfile>>>
+    export type EnrollVoiceProfileMutationBody = BodyType<VoiceProfileInput>
+    export type EnrollVoiceProfileMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Manually enroll a new voice profile
+ */
+export const useEnrollVoiceProfile = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof enrollVoiceProfile>>, TError,{data: BodyType<VoiceProfileInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof enrollVoiceProfile>>,
+        TError,
+        {data: BodyType<VoiceProfileInput>},
+        TContext
+      > => {
+      return useMutation(getEnrollVoiceProfileMutationOptions(options));
+    }
+
+export const getUpdateVoiceProfileUrl = (id: number,) => {
+
+
+
+
+  return `/api/voice-profiles/${id}`
+}
+
+/**
+ * @summary Rename a voice profile
+ */
+export const updateVoiceProfile = async (id: number,
+    voiceProfileUpdate: VoiceProfileUpdate, options?: RequestInit): Promise<VoiceProfile> => {
+
+  return customFetch<VoiceProfile>(getUpdateVoiceProfileUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(voiceProfileUpdate)
+  }
+);}
+
+
+
+
+
+export const getUpdateVoiceProfileMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateVoiceProfile>>, TError,{id: number;data: BodyType<VoiceProfileUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateVoiceProfile>>, TError,{id: number;data: BodyType<VoiceProfileUpdate>}, TContext> => {
+
+const mutationKey = ['updateVoiceProfile'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateVoiceProfile>>, {id: number;data: BodyType<VoiceProfileUpdate>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  updateVoiceProfile(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateVoiceProfileMutationResult = NonNullable<Awaited<ReturnType<typeof updateVoiceProfile>>>
+    export type UpdateVoiceProfileMutationBody = BodyType<VoiceProfileUpdate>
+    export type UpdateVoiceProfileMutationError = ErrorType<void>
+
+    /**
+ * @summary Rename a voice profile
+ */
+export const useUpdateVoiceProfile = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateVoiceProfile>>, TError,{id: number;data: BodyType<VoiceProfileUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateVoiceProfile>>,
+        TError,
+        {id: number;data: BodyType<VoiceProfileUpdate>},
+        TContext
+      > => {
+      return useMutation(getUpdateVoiceProfileMutationOptions(options));
+    }
+
+export const getDeleteVoiceProfileUrl = (id: number,) => {
+
+
+
+
+  return `/api/voice-profiles/${id}`
+}
+
+/**
+ * @summary Remove an enrolled voice profile
+ */
+export const deleteVoiceProfile = async (id: number, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getDeleteVoiceProfileUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteVoiceProfileMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteVoiceProfile>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteVoiceProfile>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['deleteVoiceProfile'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteVoiceProfile>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  deleteVoiceProfile(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteVoiceProfileMutationResult = NonNullable<Awaited<ReturnType<typeof deleteVoiceProfile>>>
+
+    export type DeleteVoiceProfileMutationError = ErrorType<void>
+
+    /**
+ * @summary Remove an enrolled voice profile
+ */
+export const useDeleteVoiceProfile = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteVoiceProfile>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteVoiceProfile>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getDeleteVoiceProfileMutationOptions(options));
     }
 

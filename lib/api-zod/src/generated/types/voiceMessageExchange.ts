@@ -13,4 +13,11 @@ export interface VoiceMessageExchange {
   /** Base64-encoded synthesized speech audio of the reply */
   audioBase64: string;
   audioMimeType: string;
+  /**
+     * Name of the recognised speaker, or null if unrecognised
+     * @nullable
+     */
+  speakerName?: string | null;
+  /** True if a new voice profile was automatically created from a self-introduction */
+  autoEnrolled?: boolean;
 }

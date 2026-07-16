@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { count, eq, inArray, max } from "drizzle-orm";
-import { db, conversationsTable, messagesTable, memoriesTable } from "@workspace/db";
+import { db, conversationsTable, messagesTable, memoriesTable, voiceProfilesTable } from "@workspace/db";
 import { GetStatsResponse } from "@workspace/api-zod";
 import { requireAuth, type AuthedRequest } from "../middlewares/requireAuth";
 
@@ -20,6 +20,11 @@ router.get("/stats", requireAuth, async (req, res): Promise<void> => {
     .from(memoriesTable)
     .where(eq(memoriesTable.userId, userId));
 
+  const [{ value: voiceProfileCount = 0 } = {}] = await db
+    .select({ value: count() })
+    .from(voiceProfilesTable)
+    .where(eq(voiceProfilesTable.userId, userId));
+
   let messageCount = 0;
   let lastActiveAt: Date | null = null;
 
@@ -37,6 +42,7 @@ router.get("/stats", requireAuth, async (req, res): Promise<void> => {
       conversationCount: conversationIds.length,
       messageCount,
       memoryCount,
+      voiceProfileCount,
       lastActiveAt,
     }),
   );

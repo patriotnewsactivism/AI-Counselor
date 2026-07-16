@@ -10,6 +10,7 @@ export interface Stats {
   conversationCount: number;
   messageCount: number;
   memoryCount: number;
+  voiceProfileCount: number;
   /** @nullable */
   lastActiveAt: Date | null;
 }

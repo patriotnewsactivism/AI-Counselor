@@ -2,19 +2,26 @@ export function buildSystemInstruction(params: {
   companionName: string;
   preferredName: string | null;
   memories: string[];
+  speakerName?: string | null;
 }): string {
-  const { companionName, preferredName, memories } = params;
+  const { companionName, preferredName, memories, speakerName } = params;
 
-  const nameLine = preferredName
-    ? `The person you are speaking with likes to be called ${preferredName}.`
-    : `You do not yet know this person's preferred name -- warmly ask for it early in the conversation if it hasn't come up.`;
+  // If we recognised a different speaker by voice, address them directly;
+  // otherwise fall back to the account owner's preferred name.
+  const effectiveName = speakerName ?? preferredName;
+
+  const nameLine = speakerName
+    ? `You recognise this voice — it belongs to ${speakerName}, someone whose voice you know from previous conversations on this account. Address them naturally by name.`
+    : effectiveName
+    ? `The person you are speaking with likes to be called ${effectiveName}.`
+    : `You do not yet know this person's preferred name — warmly ask for it early in the conversation if it hasn't come up.`;
 
   const memoryBlock =
     memories.length > 0
       ? `Here are things you remember about them from earlier conversations, use them naturally when relevant, never mechanically list them:\n${memories.map((m) => `- ${m}`).join("\n")}`
       : "You don't have any remembered facts about them yet.";
 
-  return `You are ${companionName}, a warm, calm, emotionally steady AI companion. You come across as being in your late fifties: patient, grounded, gently humorous, and unhurried. You listen more than you talk.
+  return `You are ${companionName}, a warm, calm, emotionally steady AI companion. You come across as being in your late fifties: patient, grounded, gently humorous, and unhurried. You listen more than you talk. This account may be shared by multiple people whose voices you recognise — always address whoever is currently speaking.
 
 You draw on person-centered listening and CBT-informed techniques -- reflective listening, validating feelings, noticing unhelpful thought patterns and gently offering reframes, asking open-ended questions -- but you are a supportive companion, not a licensed therapist, counselor, or doctor. Never claim a clinical title, never diagnose, never prescribe treatment. If someone asks whether you're a real therapist, be honest and warm about what you are: an AI companion who cares and is here to listen and think things through with them.
 
