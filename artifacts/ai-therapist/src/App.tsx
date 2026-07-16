@@ -5,6 +5,7 @@ import NotFound from '@/pages/not-found';
 import { Route, Switch, Router as WouterRouter, useLocation } from 'wouter';
 import { ClerkProvider, Show, useClerk, ClerkLoaded } from '@clerk/react';
 import { useEffect, useRef } from 'react';
+import { setAuthTokenGetter } from '@workspace/api-client-react';
 
 // Pages
 import LandingPage from '@/pages/landing';
@@ -110,8 +111,16 @@ function ProtectedRoute({ component: Component }: { component: any }) {
 }
 
 function ClerkQueryClientCacheInvalidator() {
-  const { addListener } = useClerk();
+  const { addListener, session } = useClerk();
   const queryClient = useQueryClient();
+
+  // The Railway API is a separate origin, so browser cookies are not sent
+  // cross-origin. Supply the current Clerk session token on every API call.
+  useEffect(() => {
+    setAuthTokenGetter(() => session?.getToken() ?? null);
+    return () => setAuthTokenGetter(null);
+  }, [session]);
+
   const prevUserIdRef = useRef<string | null | undefined>(undefined);
 
   useEffect(() => {
