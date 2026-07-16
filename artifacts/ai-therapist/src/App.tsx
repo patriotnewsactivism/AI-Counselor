@@ -4,7 +4,6 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import NotFound from '@/pages/not-found';
 import { Route, Switch, Router as WouterRouter, useLocation } from 'wouter';
 import { ClerkProvider, Show, useClerk, ClerkLoaded } from '@clerk/react';
-import { publishableKeyFromHost } from '@clerk/react/internal';
 import { useEffect, useRef } from 'react';
 
 // Pages
@@ -15,12 +14,9 @@ import MemoriesPage from '@/pages/memories';
 import SettingsPage from '@/pages/settings';
 import AppLayout from '@/components/layout/app-layout';
 
-// Setup Clerk environment
-const clerkPubKey = publishableKeyFromHost(
-  window.location.hostname,
-  import.meta.env.VITE_CLERK_PUBLISHABLE_KEY,
-);
-const clerkProxyUrl = import.meta.env.VITE_CLERK_PROXY_URL;
+// Setup Clerk environment — plain publishable key read from env
+// host-based proxy lookup needed once we're on our own domain.
+const clerkPubKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 function stripBase(path: string): string {
@@ -143,7 +139,6 @@ function ClerkProviderWithRoutes() {
   return (
     <ClerkProvider
       publishableKey={clerkPubKey}
-      proxyUrl={clerkProxyUrl}
       appearance={clerkAppearance}
       signInUrl={`${basePath}/sign-in`}
       signUpUrl={`${basePath}/sign-up`}

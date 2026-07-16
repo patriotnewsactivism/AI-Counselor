@@ -1,0 +1,8 @@
+{
+  "buildCommand": "cd ../.. && npm install -g pnpm@9 && pnpm install --no-frozen-lockfile && pnpm --filter @workspace/ai-therapist run build",
+  "outputDirectory": "artifacts/ai-therapist/dist/public",
+  "installCommand": "echo skip",
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}

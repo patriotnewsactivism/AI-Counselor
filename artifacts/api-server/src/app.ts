@@ -2,14 +2,8 @@ import express, { type Express } from "express";
 import cors from "cors";
 import pinoHttp from "pino-http";
 import { clerkMiddleware } from "@clerk/express";
-import { publishableKeyFromHost } from "@clerk/shared/keys";
 import router from "./routes";
 import { logger } from "./lib/logger";
-import {
-  CLERK_PROXY_PATH,
-  clerkProxyMiddleware,
-  getClerkProxyHost,
-} from "./middlewares/clerkProxyMiddleware";
 
 const app: Express = express();
 
@@ -33,20 +27,26 @@ app.use(
   }),
 );
 
-app.use(CLERK_PROXY_PATH, clerkProxyMiddleware());
+// CORS — in production, restrict to your actual frontend domain via
+// ALLOWED_ORIGINS="https://your-app.com,https://www.your-app.com"
+const rawOrigins = process.env.ALLOWED_ORIGINS;
+const corsOptions = rawOrigins
+  ? {
+      credentials: true,
+      origin: rawOrigins.split(",").map((o) => o.trim()),
+    }
+  : {
+      credentials: true,
+      origin: true, // dev: allow any origin
+    };
 
-app.use(cors({ credentials: true, origin: true }));
+app.use(cors(corsOptions));
 app.use(express.json({ limit: "25mb" }));
 app.use(express.urlencoded({ extended: true, limit: "25mb" }));
 
-app.use(
-  clerkMiddleware((req) => ({
-    publishableKey: publishableKeyFromHost(
-      getClerkProxyHost(req) ?? "",
-      process.env.CLERK_PUBLISHABLE_KEY,
-    ),
-  })),
-);
+// Standard Clerk middleware — uses CLERK_SECRET_KEY + CLERK_PUBLISHABLE_KEY
+// from env — standard setup for a fixed custom domain.
+app.use(clerkMiddleware());
 
 app.use("/api", router);
 
