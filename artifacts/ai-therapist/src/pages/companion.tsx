@@ -1,21 +1,34 @@
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useParams } from "wouter";
-import { 
-  useGetConversation, 
-  useListMessages, 
-  useSendMessage, 
-  useSendVoiceMessage, 
+import {
+  useGetConversation,
+  useListMessages,
+  useSendMessage,
+  useSendVoiceMessage,
   useCreateConversation,
   useGetProfile
 } from "@workspace/api-client-react";
-import { VoiceRecorder } from "@/components/companion/voice-recorder";
+import { VoiceRecorder, type VoiceRecorderHandle } from "@/components/companion/voice-recorder";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
-import { Loader2, User, Play, Square, Mic } from "lucide-react";
+import { Loader2, User, Mic, Repeat } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { getListMessagesQueryKey, getListConversationsQueryKey, getGetConversationQueryKey } from "@workspace/api-client-react";
 import { useToast } from "@/hooks/use-toast";
+
+// Local storage key for the turn-based "keep listening" toggle.
+const CONTINUOUS_MODE_KEY = "ai-therapist:continuousMode";
+
+// Small pause after the companion finishes speaking before we re-arm the
+// mic, so the tail of its own TTS audio isn't picked up as the next input.
+// This turn-based approach (speak -> reply -> auto re-listen, never both
+// directions open at once) is the intentional seam for a future "live"
+// duplex mode: swap this effect + VoiceRecorderHandle for a persistent
+// WebRTC/streaming channel without touching the rest of the page.
+const RE_ARM_DELAY_MS = 500;
 
 export default function CompanionPage() {
   const { id } = useParams<{ id?: string }>();
@@ -27,6 +40,13 @@ export default function CompanionPage() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const { toast } = useToast();
+  const recorderRef = useRef<VoiceRecorderHandle>(null);
+
+  const [continuousMode, setContinuousMode] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    const stored = window.localStorage.getItem(CONTINUOUS_MODE_KEY);
+    return stored === null ? true : stored === "true";
+  });
 
   const isNew = !id;
   const conversationId = isNew ? null : parseInt(id, 10);
@@ -53,15 +73,31 @@ export default function CompanionPage() {
     }
   }, [messages, isProcessing]);
 
-  // Handle audio playback end
+  useEffect(() => {
+    window.localStorage.setItem(CONTINUOUS_MODE_KEY, String(continuousMode));
+  }, [continuousMode]);
+
+  // Handle audio playback end — this is where turn-based "keep talking"
+  // actually happens: once the companion's reply finishes playing, and the
+  // user has continuous mode on, we re-arm the mic automatically instead of
+  // making them tap it again. Voice input and TTS playback never overlap.
   useEffect(() => {
     const audio = audioRef.current;
-    if (audio) {
-      audio.onended = () => setIsPlaying(false);
-      audio.onpause = () => setIsPlaying(false);
-      audio.onplay = () => setIsPlaying(true);
-    }
-  }, [audioUrl]);
+    if (!audio) return;
+
+    const handleEnded = () => {
+      setIsPlaying(false);
+      if (continuousMode && !isProcessing) {
+        window.setTimeout(() => {
+          recorderRef.current?.startRecording();
+        }, RE_ARM_DELAY_MS);
+      }
+    };
+
+    audio.onended = handleEnded;
+    audio.onpause = () => setIsPlaying(false);
+    audio.onplay = () => setIsPlaying(true);
+  }, [audioUrl, continuousMode, isProcessing]);
 
   const playAudio = (url: string) => {
     if (audioRef.current) {
@@ -85,7 +121,7 @@ export default function CompanionPage() {
     setIsProcessing(true);
     try {
       let targetId = conversationId;
-      
+
       if (!targetId) {
         // Create new conversation first
         const newConv = await createConv.mutateAsync({ data: { title: "New Conversation" } });
@@ -97,7 +133,7 @@ export default function CompanionPage() {
       }
 
       await sendText.mutateAsync({ id: targetId, data: { content } });
-      
+
       // Refresh messages
       queryClient.invalidateQueries({ queryKey: getListMessagesQueryKey(targetId) });
     } catch (err) {
@@ -111,7 +147,7 @@ export default function CompanionPage() {
     setIsProcessing(true);
     try {
       let targetId = conversationId;
-      
+
       if (!targetId) {
         const newConv = await createConv.mutateAsync({ data: { title: "New Conversation" } });
         targetId = newConv.id;
@@ -119,11 +155,11 @@ export default function CompanionPage() {
         setLocation(`/companion/${targetId}`);
       }
 
-      const response = await sendVoice.mutateAsync({ 
-        id: targetId, 
-        data: { audioBase64, mimeType } 
+      const response = await sendVoice.mutateAsync({
+        id: targetId,
+        data: { audioBase64, mimeType }
       });
-      
+
       if (response.autoEnrolled && response.speakerName) {
         toast({
           title: "New voice recognized",
@@ -172,11 +208,23 @@ export default function CompanionPage() {
         <Avatar className="h-10 w-10 border-2 border-primary/20">
           <AvatarFallback className="bg-primary/10 text-primary font-serif">{companionName[0]}</AvatarFallback>
         </Avatar>
-        <div>
+        <div className="flex-1">
           <h2 className="font-serif text-lg font-medium leading-none text-foreground">{companionName}</h2>
           <p className="text-xs text-muted-foreground mt-1">
             {isProcessing ? "Listening..." : "Listening"}
           </p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <Repeat className="h-3.5 w-3.5 text-muted-foreground" />
+          <Label htmlFor="continuous-mode" className="text-xs text-muted-foreground cursor-pointer hidden sm:inline">
+            Keep talking
+          </Label>
+          <Switch
+            id="continuous-mode"
+            checked={continuousMode}
+            onCheckedChange={setContinuousMode}
+            aria-label="Automatically listen again after each reply"
+          />
         </div>
       </header>
 
@@ -203,11 +251,11 @@ export default function CompanionPage() {
                       <AvatarFallback className="bg-primary/10 text-primary text-xs font-serif">{companionName[0]}</AvatarFallback>
                     </Avatar>
                   )}
-                  
+
                   <div className={cn(
                     "relative px-5 py-3.5 max-w-[85%] md:max-w-[75%]",
-                    isUser 
-                      ? "bg-primary text-primary-foreground rounded-2xl rounded-tr-sm" 
+                    isUser
+                      ? "bg-primary text-primary-foreground rounded-2xl rounded-tr-sm"
                       : "bg-card border border-border text-card-foreground rounded-2xl rounded-tl-sm shadow-sm"
                   )}>
                     <div className="text-[15px] leading-relaxed break-words whitespace-pre-wrap">
@@ -234,7 +282,7 @@ export default function CompanionPage() {
               );
             })
           )}
-          
+
           {isProcessing && (
             <div className="flex w-full gap-4 justify-start">
               <Avatar className="h-8 w-8 border border-border mt-1 shrink-0">
@@ -249,17 +297,18 @@ export default function CompanionPage() {
               </div>
             </div>
           )}
-          
+
           <div ref={scrollRef} className="h-4" />
         </div>
       </ScrollArea>
 
       {/* Input Area */}
       <div className="p-4 md:p-6 bg-gradient-to-t from-background via-background to-transparent shrink-0 border-t border-border/10">
-        <VoiceRecorder 
-          onSendAudio={handleSendVoice} 
-          onSendText={handleSendText} 
-          isProcessing={isProcessing} 
+        <VoiceRecorder
+          ref={recorderRef}
+          onSendAudio={handleSendVoice}
+          onSendText={handleSendText}
+          isProcessing={isProcessing}
         />
       </div>
     </div>
