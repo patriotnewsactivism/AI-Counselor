@@ -252,8 +252,9 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
       const recorder = recorderRef.current;
       if (!recorder || recorder.state !== "recording") return;
       discardTurnRef.current = !send;
+      // Keep recorderRef occupied until onstop has flushed the audio and
+      // released it. This prevents a second recorder from starting mid-stop.
       recorder.stop();
-      recorderRef.current = null;
       speechStartedAtRef.current = null;
       silenceStartedAtRef.current = null;
       turnStartedAtRef.current = null;
@@ -278,26 +279,33 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
       }
 
       recorderRef.current = recorder;
-      chunksRef.current = [];
+      const chunks: Blob[] = [];
+      chunksRef.current = chunks;
       discardTurnRef.current = false;
       turnStartedAtRef.current = performance.now();
       setRecordingDuration(0);
       setTurn("recording");
 
       recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) chunksRef.current.push(event.data);
+        if (event.data.size > 0) chunks.push(event.data);
       };
 
       recorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || mimeType || "audio/webm" });
+        // MediaRecorder.stop() is asynchronous. Keep the ref occupied until
+        // this callback runs so VAD cannot start a second recorder while the
+        // previous one is still flushing its final audio chunk.
+        if (recorderRef.current === recorder) recorderRef.current = null;
+        const blob = new Blob(chunks, { type: recorder.mimeType || mimeType || "audio/webm" });
         const shouldSend = !discardTurnRef.current && sessionActiveRef.current && blob.size > 0;
-        chunksRef.current = [];
+        if (!shouldSend) chunksRef.current = [];
 
         if (!shouldSend) {
           if (sessionActiveRef.current && !isProcessingRef.current) setTurn("listening");
           return;
         }
         if (modeRef.current === "wake") wakeArmedRef.current = false;
+        chunksRef.current = [];
+        setMicError(null);
 
         void (async () => {
           try {
@@ -312,7 +320,9 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
         })();
       };
 
-      recorder.start();
+      // Emit chunks while recording. Mobile browsers can otherwise lose the
+      // only final chunk when stop() races the MediaRecorder flush event.
+      recorder.start(250);
       if (durationTimerRef.current !== null) window.clearInterval(durationTimerRef.current);
       durationTimerRef.current = window.setInterval(() => {
         setRecordingDuration((value) => value + 1);

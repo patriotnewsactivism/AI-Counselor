@@ -21,6 +21,68 @@ const LIVE_MODE_KEY = "ai-therapist:liveListenMode";
 const WAKE_WORD_KEY = "ai-therapist:wakeWord";
 const RESTART_LISTEN_DELAY_MS = 450;
 
+type VoiceFailureKind = "no-speech" | "rate-limit" | "auth" | "server" | "unknown";
+
+type ErrorLike = {
+  message?: unknown;
+  status?: unknown;
+  data?: unknown;
+};
+
+function getVoiceFailure(error: unknown): { kind: VoiceFailureKind; message: string } {
+  const value = error && typeof error === "object" ? error as ErrorLike : null;
+  const data = value?.data && typeof value.data === "object" ? value.data as Record<string, unknown> : null;
+  const status = typeof value?.status === "number" ? value.status : null;
+  const messageParts = [
+    typeof value?.message === "string" ? value.message : null,
+    typeof data?.error === "string" ? data.error : null,
+    typeof data?.message === "string" ? data.message : null,
+    typeof data?.detail === "string" ? data.detail : null,
+  ].filter((part): part is string => Boolean(part));
+  const message = messageParts.join(" — ") || "Voice request failed";
+  const normalized = message.toLocaleLowerCase();
+
+  if (
+    normalized.includes("no speech") ||
+    normalized.includes("could not understand the audio") ||
+    normalized.includes("empty transcript")
+  ) {
+    return { kind: "no-speech", message };
+  }
+  if (
+    status === 429 ||
+    normalized.includes("429") ||
+    normalized.includes("rate limit") ||
+    normalized.includes("too many requests") ||
+    normalized.includes("daily token") ||
+    normalized.includes("tokens per day") ||
+    normalized.includes("quota")
+  ) {
+    return { kind: "rate-limit", message };
+  }
+  if (
+    status === 401 ||
+    status === 403 ||
+    normalized.includes("401") ||
+    normalized.includes("403") ||
+    normalized.includes("unauthorized") ||
+    normalized.includes("authentication") ||
+    normalized.includes("sign in")
+  ) {
+    return { kind: "auth", message };
+  }
+  if (status !== null && status >= 500) return { kind: "server", message };
+  return { kind: "unknown", message };
+}
+
+function readableVoiceFailure(message: string): string {
+  return message
+    .replace(/^HTTP \d+[^:]*:\s*/i, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 240);
+}
+
 export default function CompanionPage() {
   const { id } = useParams<{ id?: string }>();
   const [, setLocation] = useLocation();
@@ -88,10 +150,12 @@ export default function CompanionPage() {
     };
 
     audio.onended = handleEnded;
+    audio.onerror = resumeAfterPlaybackFailure;
     audio.onpause = () => setIsPlaying(false);
     audio.onplay = () => setIsPlaying(true);
     return () => {
       audio.onended = null;
+      audio.onerror = null;
       audio.onpause = null;
       audio.onplay = null;
     };
@@ -104,11 +168,21 @@ export default function CompanionPage() {
     };
   }, []);
 
+  const resumeAfterPlaybackFailure = () => {
+    setIsPlaying(false);
+    if (liveSessionRef.current) {
+      window.setTimeout(() => recorderRef.current?.resumeListening(), RESTART_LISTEN_DELAY_MS);
+    }
+  };
+
   const playAudio = (url: string) => {
     const audio = audioRef.current;
     if (!audio) return;
     audio.src = url;
-    void audio.play().catch((error) => console.error("Audio play failed", error));
+    void audio.play().catch((error) => {
+      console.error("Audio play failed", error);
+      resumeAfterPlaybackFailure();
+    });
   };
 
   const ensureConversation = async () => {
@@ -159,9 +233,19 @@ export default function CompanionPage() {
       }
 
       queryClient.invalidateQueries({ queryKey: getListMessagesQueryKey(targetId) });
-    } catch (error) {
+    } catch (error: unknown) {
       console.error("Failed to send voice message", error);
-      toast({ title: "I couldn't hear that", description: "Please try speaking again.", variant: "destructive" });
+      const failure = getVoiceFailure(error);
+      const description = readableVoiceFailure(failure.message);
+      if (failure.kind === "no-speech") {
+        toast({ title: "I didn’t catch a clear voice turn", description: "Keep the phone in the foreground and try speaking a little closer to the microphone." });
+      } else if (failure.kind === "rate-limit") {
+        toast({ title: "Aura’s free AI limit is temporarily full", description: "The voice recording arrived, but Groq’s free-tier limit is exhausted. Try again after the limit resets." , variant: "destructive" });
+      } else if (failure.kind === "auth") {
+        toast({ title: "Your session needs to be refreshed", description: "Sign out, sign back in, and try the live conversation again.", variant: "destructive" });
+      } else {
+        toast({ title: "Aura couldn’t complete that voice turn", description, variant: "destructive" });
+      }
       if (liveSessionRef.current) window.setTimeout(() => recorderRef.current?.resumeListening(), RESTART_LISTEN_DELAY_MS);
     } finally {
       setIsProcessing(false);
