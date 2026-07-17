@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState, forwardRef, useImperativeHandle } from "react";
-import { Mic, Square, Loader2, Send, Radio, ShieldCheck, Volume2 } from "lucide-react";
+import { Mic, Square, Loader2, Send, Radio, ShieldCheck, Volume2, Hand, Pause, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 export type LiveListenMode = "always" | "wake";
 
-type TurnState = "idle" | "listening" | "recording" | "processing";
+type TurnState = "idle" | "starting" | "listening" | "recording" | "processing" | "speaking";
 
 type WakeRecognitionResult = {
   isFinal?: boolean;
@@ -34,6 +34,8 @@ type WakeRecognitionConstructor = new () => WakeRecognition;
 export interface VoiceRecorderHandle {
   /** Start a hands-free conversation session. */
   startRecording: () => Promise<void>;
+  /** Pause VAD while Aura is speaking without releasing the microphone. */
+  pauseForPlayback: () => void;
   /** Resume turn detection after Aura finishes speaking. */
   resumeListening: () => void;
   /** End the hands-free conversation session and release the microphone. */
@@ -43,8 +45,22 @@ export interface VoiceRecorderHandle {
 interface VoiceRecorderProps {
   onSendAudio: (base64: string, mimeType: string) => Promise<void>;
   onSendText: (text: string) => Promise<void>;
-  /** Keep true while the companion is transcribing, thinking, or speaking. */
+  /** Keep true while the companion is transcribing or thinking. */
   isProcessing: boolean;
+  /** Keep true while Aura's reply audio is playing. */
+  isSpeaking: boolean;
+  /** Called immediately when the user's voice interrupts reply playback. */
+  onBargeIn?: () => void;
+  /** Whether Aura's reply audio is currently playing or paused. */
+  playbackActive?: boolean;
+  /** Whether the current reply is paused at its current audio position. */
+  playbackPaused?: boolean;
+  /** Stop reply playback and open the microphone for a fresh turn. */
+  onInterruptPlayback?: () => void;
+  /** Pause reply playback without discarding the unplayed reply. */
+  onPausePlayback?: () => void;
+  /** Resume a paused reply. */
+  onResumePlayback?: () => void;
   mode: LiveListenMode;
   wakeWord: string;
   onModeChange: (mode: LiveListenMode) => void;
@@ -88,6 +104,13 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
       onSendAudio,
       onSendText,
       isProcessing,
+      isSpeaking,
+      onBargeIn,
+      playbackActive = false,
+      playbackPaused = false,
+      onInterruptPlayback,
+      onPausePlayback,
+      onResumePlayback,
       mode,
       wakeWord,
       onModeChange,
@@ -102,10 +125,11 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
     const [text, setText] = useState("");
     const [recordingDuration, setRecordingDuration] = useState(0);
     const [micError, setMicError] = useState<string | null>(null);
-
     const sessionActiveRef = useRef(false);
+    const startInFlightRef = useRef(false);
     const turnStateRef = useRef<TurnState>("idle");
     const isProcessingRef = useRef(isProcessing);
+    const isSpeakingRef = useRef(isSpeaking);
     const streamRef = useRef<MediaStream | null>(null);
     const recorderRef = useRef<MediaRecorder | null>(null);
     const chunksRef = useRef<Blob[]>([]);
@@ -117,6 +141,7 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
     const silenceStartedAtRef = useRef<number | null>(null);
     const turnStartedAtRef = useRef<number | null>(null);
     const discardTurnRef = useRef(false);
+    const playbackPausedRef = useRef(false);
     const durationTimerRef = useRef<number | null>(null);
     const wakeRecognitionRef = useRef<WakeRecognition | null>(null);
     const wakeRestartTimerRef = useRef<number | null>(null);
@@ -124,15 +149,18 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
     const wakeWordRef = useRef(wakeWord);
     const modeRef = useRef(mode);
     const onSessionChangeRef = useRef(onSessionChange);
+    const onBargeInRef = useRef(onBargeIn);
 
     useEffect(() => {
       wakeWordRef.current = wakeWord;
       modeRef.current = mode;
       onSessionChangeRef.current = onSessionChange;
-    }, [mode, onSessionChange, wakeWord]);
+      onBargeInRef.current = onBargeIn;
+    }, [mode, onBargeIn, onSessionChange, wakeWord]);
 
     useEffect(() => {
       isProcessingRef.current = isProcessing;
+      isSpeakingRef.current = isSpeaking;
       if (isProcessing) {
         stopWakeRecognition();
         if (turnStateRef.current !== "processing") {
@@ -140,7 +168,7 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
           setTurnState("processing");
         }
       }
-    }, [isProcessing]);
+    }, [isProcessing, isSpeaking]);
 
     useEffect(() => {
       modeRef.current = mode;
@@ -263,7 +291,7 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
     };
 
     const beginTurn = () => {
-      if (!sessionActiveRef.current || isProcessingRef.current || recorderRef.current) return;
+      if (!sessionActiveRef.current || isProcessingRef.current || playbackPausedRef.current || recorderRef.current) return;
       if (modeRef.current === "wake" && !wakeArmedRef.current) return;
       const stream = streamRef.current;
       if (!stream) return;
@@ -303,6 +331,12 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
           if (sessionActiveRef.current && !isProcessingRef.current) setTurn("listening");
           return;
         }
+        // Reserve the request before yielding to FileReader so a stop/start
+        // race cannot queue the same captured turn twice.
+        if (isProcessingRef.current) {
+          if (sessionActiveRef.current) setTurn("listening");
+          return;
+        }
         if (modeRef.current === "wake") wakeArmedRef.current = false;
         chunksRef.current = [];
         setMicError(null);
@@ -322,7 +356,15 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
 
       // Emit chunks while recording. Mobile browsers can otherwise lose the
       // only final chunk when stop() races the MediaRecorder flush event.
-      recorder.start(250);
+      try {
+        recorder.start(250);
+      } catch (error) {
+        recorderRef.current = null;
+        console.error("Could not start audio recorder", error);
+        setTurn("listening");
+        setMicError("This browser could not start a live recording.");
+        return;
+      }
       if (durationTimerRef.current !== null) window.clearInterval(durationTimerRef.current);
       durationTimerRef.current = window.setInterval(() => {
         setRecordingDuration((value) => value + 1);
@@ -346,6 +388,25 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
         sum += normalized * normalized;
       }
       const level = Math.sqrt(sum / sampleBuffer.length);
+
+      if (playbackPausedRef.current && isSpeakingRef.current) {
+        // Keep the analyser hot during playback. If the person starts talking,
+        // cut Aura off immediately and then record that fresh turn.
+        if (level >= START_THRESHOLD) {
+          playbackPausedRef.current = false;
+          isSpeakingRef.current = false;
+          onBargeInRef.current?.();
+          setTurn("listening");
+        } else {
+          animationFrameRef.current = requestAnimationFrame(monitor);
+          return;
+        }
+      }
+      if (playbackPausedRef.current) {
+        animationFrameRef.current = requestAnimationFrame(monitor);
+        return;
+      }
+
       const now = performance.now();
       const recorder = recorderRef.current;
 
@@ -373,8 +434,10 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
     };
 
     const startRecording = async () => {
-      if (sessionActiveRef.current || isProcessingRef.current) return;
+      if (sessionActiveRef.current || startInFlightRef.current || isProcessingRef.current) return;
+      startInFlightRef.current = true;
       setMicError(null);
+      setTurn("starting");
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: {
@@ -397,6 +460,8 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
         audioContextRef.current = context;
         analyserRef.current = analyser;
         sessionActiveRef.current = true;
+        isSpeakingRef.current = false;
+        playbackPausedRef.current = false;
         setSessionActive(true);
         onSessionChangeRef.current?.(true);
         wakeArmedRef.current = modeRef.current === "always";
@@ -406,14 +471,20 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
       } catch (error) {
         console.error("Error accessing microphone:", error);
         releaseMicrophone();
+        setTurn("idle");
         setMicError("Microphone access is needed for a live conversation. Check your browser permission and try again.");
+      } finally {
+        startInFlightRef.current = false;
       }
     };
 
     const stopRecording = () => {
+      startInFlightRef.current = false;
       const recorder = recorderRef.current;
       if (recorder?.state === "recording") stopTurn(false);
       sessionActiveRef.current = false;
+      isSpeakingRef.current = false;
+      playbackPausedRef.current = false;
       discardTurnRef.current = true;
       setSessionActive(false);
       onSessionChangeRef.current?.(false);
@@ -422,8 +493,19 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
       setRecordingDuration(0);
     };
 
+    const pauseForPlayback = () => {
+      if (!sessionActiveRef.current) return;
+      isSpeakingRef.current = true;
+      playbackPausedRef.current = true;
+      stopWakeRecognition();
+      if (recorderRef.current?.state === "recording") stopTurn(false);
+      setTurn("speaking");
+    };
+
     const resumeListening = () => {
       if (!sessionActiveRef.current) return;
+      isSpeakingRef.current = false;
+      playbackPausedRef.current = false;
       isProcessingRef.current = false;
       wakeArmedRef.current = modeRef.current === "always";
       setTurn("listening");
@@ -431,7 +513,7 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
       if (animationFrameRef.current === null) animationFrameRef.current = requestAnimationFrame(monitor);
     };
 
-    useImperativeHandle(ref, () => ({ startRecording, resumeListening, stopRecording }));
+    useImperativeHandle(ref, () => ({ startRecording, pauseForPlayback, resumeListening, stopRecording }));
 
     useEffect(() => {
       return () => {
@@ -454,6 +536,19 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
       if (!text.trim() || isProcessing) return;
       void onSendText(text.trim());
       setText("");
+    };
+
+    const handleInterruptPlayback = () => {
+      onInterruptPlayback?.();
+    };
+
+    const handlePausePlayback = () => {
+      if (!playbackActive) return;
+      onPausePlayback?.();
+    };
+
+    const handleResumePlayback = () => {
+      onResumePlayback?.();
     };
 
     return (
@@ -535,17 +630,44 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
             ) : (
               <div className="w-full max-w-md rounded-2xl border border-primary/25 bg-primary/5 px-4 py-3 shadow-sm" aria-live="polite">
                 <div className="flex items-center gap-3">
-                  <div className={cn("h-3 w-3 rounded-full", turnState === "recording" ? "bg-destructive animate-pulse" : turnState === "processing" ? "bg-amber-500 animate-pulse" : "bg-emerald-500 animate-pulse")} />
+                  <div className={cn("h-3 w-3 rounded-full", turnState === "recording" ? "bg-destructive animate-pulse" : turnState === "processing" ? "bg-amber-500 animate-pulse" : turnState === "speaking" ? "bg-sky-500 animate-pulse" : turnState === "starting" ? "bg-amber-500 animate-pulse" : "bg-emerald-500 animate-pulse")} />
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-foreground">
-                      {turnState === "recording" ? "I’m listening…" : turnState === "processing" ? "Aura is thinking…" : mode === "wake" ? `Say “${wakeWord.trim() || "Aura"}” when you’re ready` : "Listening for you"}
+                      {turnState === "starting" ? "Starting microphone…" : turnState === "recording" ? "I’m listening…" : turnState === "processing" ? "Aura is thinking…" : turnState === "speaking" ? "Aura is speaking — talk to interrupt" : mode === "wake" ? `Say “${wakeWord.trim() || "Aura"}” when you’re ready` : "Listening for you"}
                     </p>
                     <p className="text-xs text-muted-foreground mt-0.5">
                       {turnState === "recording" ? formatTime(recordingDuration) : "You can set your phone down. No tap is needed between turns."}
                     </p>
                   </div>
-                  {turnState === "processing" ? <Volume2 className="h-4 w-4 text-amber-600 shrink-0" /> : <Mic className="h-4 w-4 text-primary shrink-0" />}
+                  {turnState === "processing" || turnState === "speaking" ? <Volume2 className="h-4 w-4 text-amber-600 shrink-0" /> : <Mic className="h-4 w-4 text-primary shrink-0" />}
                 </div>
+              </div>
+            )}
+
+            {sessionActive && playbackActive && (
+              <div className="flex flex-wrap items-center justify-center gap-2" role="group" aria-label="Aura playback controls">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={handleInterruptPlayback}
+                  title="Stop Aura now and start listening"
+                  aria-label="Interrupt Aura and speak now"
+                >
+                  <Hand className="h-4 w-4" />
+                  Interrupt Aura
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  onClick={playbackPaused ? handleResumePlayback : handlePausePlayback}
+                  title={playbackPaused ? "Resume Aura's reply" : "Pause Aura so you can speak"}
+                  aria-label={playbackPaused ? "Resume Aura" : "Pause Aura and speak now"}
+                >
+                  {playbackPaused ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
+                  {playbackPaused ? "Resume Aura" : "Pause & speak"}
+                </Button>
               </div>
             )}
 
@@ -557,8 +679,8 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
                 </>
               )}
               <button
-                onClick={sessionActive ? stopRecording : startRecording}
-                disabled={!sessionActive && isProcessing}
+                onClick={sessionActive ? stopRecording : () => { void startRecording(); }}
+                disabled={!sessionActive && (isProcessing || startInFlightRef.current || turnState === "starting")}
                 aria-label={sessionActive ? "End live conversation" : "Start live conversation"}
                 className={cn(
                   "relative z-10 flex items-center justify-center h-24 w-24 rounded-full transition-all duration-300 shadow-lg",

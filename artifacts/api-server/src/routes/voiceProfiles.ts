@@ -40,11 +40,34 @@ router.post("/voice-profiles", requireAuth, async (req, res): Promise<void> => {
     return;
   }
 
+  const name = body.data.name.trim();
+  const [existing] = await db
+    .select({ id: voiceProfilesTable.id })
+    .from(voiceProfilesTable)
+    .where(and(eq(voiceProfilesTable.userId, userId), eq(voiceProfilesTable.name, name)))
+    .limit(1);
+
+  if (existing) {
+    // Re-enrolling a named voice replaces its reference sample instead of
+    // creating a second profile that can compete during matching.
+    const [updated] = await db
+      .update(voiceProfilesTable)
+      .set({
+        sampleAudio: body.data.audioBase64,
+        sampleMimeType: body.data.mimeType,
+        lastHeardAt: null,
+      })
+      .where(and(eq(voiceProfilesTable.id, existing.id), eq(voiceProfilesTable.userId, userId)))
+      .returning();
+    res.json(EnrollVoiceProfileResponse.parse(updated));
+    return;
+  }
+
   const [profile] = await db
     .insert(voiceProfilesTable)
     .values({
       userId,
-      name: body.data.name,
+      name,
       sampleAudio: body.data.audioBase64,
       sampleMimeType: body.data.mimeType,
     })

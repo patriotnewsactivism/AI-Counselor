@@ -1,4 +1,6 @@
 import express, { type Express } from "express";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import cors from "cors";
 import pinoHttp from "pino-http";
 import { clerkMiddleware } from "@clerk/express";
@@ -49,5 +51,23 @@ app.use(express.urlencoded({ extended: true, limit: "25mb" }));
 app.use(clerkMiddleware());
 
 app.use("/api", router);
+
+// The Railway service is intentionally self-contained: it serves both the
+// JSON API and the Vite-built SPA. Keep the API namespace above the static
+// middleware so `/api/*` can never be swallowed by the SPA fallback.
+const apiServerDir = path.dirname(fileURLToPath(import.meta.url));
+const frontendDist = path.resolve(apiServerDir, "../../ai-therapist/dist/public");
+
+app.use(express.static(frontendDist));
+app.get("/{*splat}", (_req, res, next) => {
+  if (_req.path.startsWith("/api/")) {
+    next();
+    return;
+  }
+
+  res.sendFile(path.join(frontendDist, "index.html"), (err) => {
+    if (err) next(err);
+  });
+});
 
 export default app;

@@ -208,7 +208,7 @@ function EnrollVoiceDialog({ open, onOpenChange }: { open: boolean, onOpenChange
         stream.getTracks().forEach(track => track.stop());
       };
 
-      mediaRecorder.start();
+      mediaRecorder.start(250);
       setIsRecording(true);
       setRecordingDuration(0);
       

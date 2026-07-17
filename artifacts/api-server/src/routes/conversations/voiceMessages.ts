@@ -1,9 +1,9 @@
 import { Router, type IRouter } from "express";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db, voiceProfilesTable } from "@workspace/db";
 import { SendVoiceMessageParams, SendVoiceMessageBody, SendVoiceMessageResponse } from "@workspace/api-zod";
 import { transcribeAudio, synthesizeSpeech } from "@workspace/deepgram";
-import { identifyOrEnrollSpeaker } from "@workspace/gemini";
+import { identifyOrEnrollSpeaker, extractIntroducedName } from "@workspace/gemini";
 import { requireAuth, type AuthedRequest } from "../../middlewares/requireAuth";
 import { getOrCreateProfile } from "../../lib/getOrCreateProfile";
 import { runCompanionExchange } from "../../lib/companionExchange";
@@ -77,23 +77,51 @@ router.post("/conversations/:id/voice-messages", requireAuth, async (req, res): 
         .execute()
         .catch(() => { /* non-critical */ });
     } else if (result.introducedName) {
-      // New person introduced themselves — auto-enrol their voice
-      const [newProfile] = await db
-        .insert(voiceProfilesTable)
-        .values({
-          userId,
-          name: result.introducedName,
-          sampleAudio: body.data.audioBase64,
-          sampleMimeType: body.data.mimeType,
-        })
-        .returning({ id: voiceProfilesTable.id, name: voiceProfilesTable.name });
-      speakerName = newProfile.name;
-      autoEnrolled = true;
-      req.log.info({ name: result.introducedName }, "Auto-enrolled new voice profile from self-introduction");
+      // New person introduced themselves — auto-enrol their voice once. A
+      // same-name check protects against duplicate mobile retries.
+      const [existing] = await db
+        .select({ id: voiceProfilesTable.id, name: voiceProfilesTable.name })
+        .from(voiceProfilesTable)
+        .where(and(eq(voiceProfilesTable.userId, userId), eq(voiceProfilesTable.name, result.introducedName)));
+      if (existing) {
+        speakerName = existing.name;
+        autoEnrolled = false;
+        db.update(voiceProfilesTable)
+          .set({ lastHeardAt: new Date() })
+          .where(and(eq(voiceProfilesTable.id, existing.id), eq(voiceProfilesTable.userId, userId)))
+          .execute()
+          .catch(() => { /* non-critical */ });
+      } else {
+        const [newProfile] = await db
+          .insert(voiceProfilesTable)
+          .values({
+            userId,
+            name: result.introducedName,
+            sampleAudio: body.data.audioBase64,
+            sampleMimeType: body.data.mimeType,
+          })
+          .returning({ id: voiceProfilesTable.id, name: voiceProfilesTable.name });
+        speakerName = newProfile.name;
+        autoEnrolled = true;
+        req.log.info({ name: result.introducedName }, "Auto-enrolled new voice profile from self-introduction");
+      }
     }
   } catch (err) {
     // Speaker ID is completely optional — log and continue
     req.log.warn({ err }, "Speaker identification failed, continuing without it");
+  }
+
+  // Retries can happen when a mobile turn is replayed. Reuse a profile created
+  // by the previous request instead of inserting duplicate voice rows.
+  if (!speakerName) {
+    const introducedName = extractIntroducedName(transcript);
+    if (introducedName) {
+      const [existing] = await db
+        .select({ id: voiceProfilesTable.id, name: voiceProfilesTable.name })
+        .from(voiceProfilesTable)
+        .where(and(eq(voiceProfilesTable.userId, userId), eq(voiceProfilesTable.name, introducedName)));
+      if (existing) speakerName = existing.name;
+    }
   }
 
   // ── 3. Companion exchange ────────────────────────────────────────────────

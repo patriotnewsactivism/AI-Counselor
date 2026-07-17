@@ -1,8 +1,8 @@
-import { ai, GEMINI_MODEL } from "./client";
+import { getGeminiClient, GEMINI_MODEL } from "./client";
 import { buildSystemInstruction, MEMORY_EXTRACTION_INSTRUCTION } from "./persona";
 
-export { ai, GEMINI_MODEL };
-export { identifyOrEnrollSpeaker, type EnrolledProfile, type SpeakerResult } from "./speaker";
+export { getGeminiClient, GEMINI_MODEL };
+export { identifyOrEnrollSpeaker, extractIntroducedName, type EnrolledProfile, type SpeakerResult } from "./speaker";
 
 export interface ChatTurn {
   role: "user" | "assistant";

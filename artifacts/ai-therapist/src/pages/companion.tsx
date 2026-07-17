@@ -87,9 +87,13 @@ export default function CompanionPage() {
   const { id } = useParams<{ id?: string }>();
   const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const playbackTimerRef = useRef<number | null>(null);
+  const playbackGenerationRef = useRef(0);
+  const voiceRequestInFlightRef = useRef(false);
+  const playbackPausedRef = useRef(false);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isPlaybackPaused, setIsPlaybackPaused] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const { toast } = useToast();
@@ -143,6 +147,9 @@ export default function CompanionPage() {
     if (!audio) return;
 
     const handleEnded = () => {
+      playbackTimerRef.current = null;
+      playbackPausedRef.current = false;
+      setIsPlaybackPaused(false);
       setIsPlaying(false);
       if (liveSessionRef.current) {
         window.setTimeout(() => recorderRef.current?.resumeListening(), RESTART_LISTEN_DELAY_MS);
@@ -151,7 +158,9 @@ export default function CompanionPage() {
 
     audio.onended = handleEnded;
     audio.onerror = resumeAfterPlaybackFailure;
-    audio.onpause = () => setIsPlaying(false);
+    audio.onpause = () => {
+      if (!playbackPausedRef.current) setIsPlaying(false);
+    };
     audio.onplay = () => setIsPlaying(true);
     return () => {
       audio.onended = null;
@@ -159,7 +168,7 @@ export default function CompanionPage() {
       audio.onpause = null;
       audio.onplay = null;
     };
-  }, [audioUrl]);
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -169,17 +178,69 @@ export default function CompanionPage() {
   }, []);
 
   const resumeAfterPlaybackFailure = () => {
+    playbackGenerationRef.current += 1;
+    if (playbackTimerRef.current !== null) {
+      window.clearTimeout(playbackTimerRef.current);
+      playbackTimerRef.current = null;
+    }
     setIsPlaying(false);
     if (liveSessionRef.current) {
       window.setTimeout(() => recorderRef.current?.resumeListening(), RESTART_LISTEN_DELAY_MS);
     }
   };
 
-  const playAudio = (url: string) => {
+  const stopPlaybackForBargeIn = () => {
+    playbackGenerationRef.current += 1;
+    if (playbackTimerRef.current !== null) {
+      window.clearTimeout(playbackTimerRef.current);
+      playbackTimerRef.current = null;
+    }
+    const audio = audioRef.current;
+    if (audio) {
+      audio.pause();
+      audio.currentTime = 0;
+    }
+    playbackPausedRef.current = false;
+    setIsPlaybackPaused(false);
+    setIsPlaying(false);
+  };
+
+  const pausePlayback = () => {
+    const audio = audioRef.current;
+    if (!audio || !isPlaying) return;
+    playbackPausedRef.current = true;
+    setIsPlaybackPaused(true);
+    audio.pause();
+  };
+
+  const resumePlayback = () => {
+    const audio = audioRef.current;
+    if (!audio || !isPlaybackPaused) return;
+    playbackPausedRef.current = false;
+    setIsPlaybackPaused(false);
+    setIsPlaying(true);
+    void audio.play().catch((error) => {
+      console.error("Audio resume failed", error);
+      resumeAfterPlaybackFailure();
+    });
+  };
+
+  const interruptPlayback = () => {
+    stopPlaybackForBargeIn();
+    if (liveSessionRef.current) recorderRef.current?.resumeListening();
+  };
+
+  const playAudio = (base64: string, mimeType: string) => {
     const audio = audioRef.current;
     if (!audio) return;
-    audio.src = url;
+    const generation = playbackGenerationRef.current + 1;
+    playbackGenerationRef.current = generation;
+    playbackPausedRef.current = false;
+    setIsPlaybackPaused(false);
+    recorderRef.current?.pauseForPlayback();
+    audio.src = `data:${mimeType};base64,${base64}`;
     void audio.play().catch((error) => {
+      if (playbackGenerationRef.current !== generation) return;
       console.error("Audio play failed", error);
       resumeAfterPlaybackFailure();
     });
@@ -211,6 +272,8 @@ export default function CompanionPage() {
   };
 
   const handleSendVoice = async (audioBase64: string, mimeType: string) => {
+    if (voiceRequestInFlightRef.current) return;
+    voiceRequestInFlightRef.current = true;
     setIsProcessing(true);
     try {
       const targetId = await ensureConversation();
@@ -227,9 +290,7 @@ export default function CompanionPage() {
       }
 
       if (response.audioBase64 && response.audioMimeType) {
-        const url = `data:${response.audioMimeType};base64,${response.audioBase64}`;
-        setAudioUrl(url);
-        window.setTimeout(() => playAudio(url), 100);
+        playAudio(response.audioBase64, response.audioMimeType);
       }
 
       queryClient.invalidateQueries({ queryKey: getListMessagesQueryKey(targetId) });
@@ -248,6 +309,7 @@ export default function CompanionPage() {
       }
       if (liveSessionRef.current) window.setTimeout(() => recorderRef.current?.resumeListening(), RESTART_LISTEN_DELAY_MS);
     } finally {
+      voiceRequestInFlightRef.current = false;
       setIsProcessing(false);
     }
   };
@@ -255,12 +317,11 @@ export default function CompanionPage() {
   const handleSessionChange = (active: boolean) => {
     liveSessionRef.current = active;
     if (!active) {
+      stopPlaybackForBargeIn();
       if (audioRef.current) {
-        audioRef.current.pause();
         audioRef.current.removeAttribute("src");
         audioRef.current.load();
       }
-      setIsPlaying(false);
       setIsProcessing(false);
     }
   };
@@ -288,7 +349,7 @@ export default function CompanionPage() {
         </Avatar>
         <div className="flex-1">
           <h2 className="font-serif text-lg font-medium leading-none text-foreground">{companionName}</h2>
-          <p className="text-xs text-muted-foreground mt-1">{isPlaying ? "Speaking…" : isProcessing ? "Thinking…" : "Ready when you are"}</p>
+          <p className="text-xs text-muted-foreground mt-1">{isPlaying ? "Speaking — talk to interrupt" : isProcessing ? "Thinking…" : "Ready when you are"}</p>
         </div>
         {isPlaying && <div className="flex items-center gap-1 text-xs text-primary"><span className="h-2 w-2 rounded-full bg-primary animate-pulse" /> Speaking</div>}
       </header>
@@ -338,7 +399,14 @@ export default function CompanionPage() {
           ref={recorderRef}
           onSendAudio={handleSendVoice}
           onSendText={handleSendText}
-          isProcessing={isProcessing || isPlaying}
+          isProcessing={isProcessing}
+          isSpeaking={isPlaying}
+          playbackActive={isPlaying || isPlaybackPaused}
+          playbackPaused={isPlaybackPaused}
+          onBargeIn={stopPlaybackForBargeIn}
+          onInterruptPlayback={interruptPlayback}
+          onPausePlayback={pausePlayback}
+          onResumePlayback={resumePlayback}
           mode={listenMode}
           wakeWord={wakeWord}
           onModeChange={setListenMode}
