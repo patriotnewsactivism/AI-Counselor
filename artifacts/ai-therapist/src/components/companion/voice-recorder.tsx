@@ -372,17 +372,21 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
       animationFrameRef.current = requestAnimationFrame(monitor);
     };
 
-    const startRecording = async () => {
+    const acquireMicrophone = async (): Promise<MediaStream> => {
+      return navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+    };
+
+    const startRecording = async (isRetry = false) => {
       if (sessionActiveRef.current || isProcessingRef.current) return;
-      setMicError(null);
+      if (!isRetry) setMicError(null);
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
-        });
+        const stream = await acquireMicrophone();
         const AudioContextClass = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
         if (!AudioContextClass) throw new Error("AudioContext unavailable");
         const context = new AudioContextClass();
@@ -404,8 +408,17 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
         if (modeRef.current === "wake") startWakeRecognition();
         animationFrameRef.current = requestAnimationFrame(monitor);
       } catch (error) {
-        console.error("Error accessing microphone:", error);
         releaseMicrophone();
+        // First attempt after a fresh page load can flake on some phones
+        // (mic hardware/browser still settling). Retry once automatically
+        // instead of forcing the user to tap the button a second time.
+        if (!isRetry) {
+          console.warn("Mic start failed, retrying once automatically", error);
+          await new Promise((resolve) => window.setTimeout(resolve, 350));
+          await startRecording(true);
+          return;
+        }
+        console.error("Error accessing microphone:", error);
         setMicError("Microphone access is needed for a live conversation. Check your browser permission and try again.");
       }
     };
@@ -557,7 +570,7 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
                 </>
               )}
               <button
-                onClick={sessionActive ? stopRecording : startRecording}
+                onClick={() => { if (sessionActive) stopRecording(); else void startRecording(); }}
                 disabled={!sessionActive && isProcessing}
                 aria-label={sessionActive ? "End live conversation" : "Start live conversation"}
                 className={cn(
