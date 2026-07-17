@@ -1,0 +1,9 @@
+tools:
+    shell:
+        allow:
+            - ls *
+            - Get-ChildItem *
+            - cd *
+            - pnpm run *
+            - pnpm approve-builds
+            - pnpm install *
