@@ -6,7 +6,7 @@ import { transcribeAudio, synthesizeSpeech } from "@workspace/deepgram";
 import { identifyOrEnrollSpeaker } from "@workspace/gemini";
 import { requireAuth, type AuthedRequest } from "../../middlewares/requireAuth";
 import { getOrCreateProfile } from "../../lib/getOrCreateProfile";
-import { runCompanionExchange } from "../../lib/companionExchange";
+import { runCompanionExchangePipelined } from "../../lib/companionExchange";
 import { findOwnedConversation } from "./shared";
 
 const router: IRouter = Router();
@@ -96,24 +96,49 @@ router.post("/conversations/:id/voice-messages", requireAuth, async (req, res): 
     req.log.warn({ err }, "Speaker identification failed, continuing without it");
   }
 
-  // ── 3. Companion exchange ────────────────────────────────────────────────
-  const { userMessage, assistantMessage } = await runCompanionExchange({
-    conversationId: params.data.id,
-    profile,
-    userContent: transcript,
-    audioMimeType: body.data.mimeType,
-    speakerName,
-  });
+  // ── 3+4. Companion exchange, pipelined with per-sentence TTS ─────────────
+  // The LLM reply streams in; as soon as each sentence is complete we kick
+  // off its speech synthesis immediately rather than waiting for the full
+  // reply text first. TTS calls run in parallel with continued generation,
+  // so wall-clock latency approaches max(generation time, synthesis time)
+  // instead of generation time + synthesis time. The client still gets one
+  // response with one concatenated audio buffer — no API contract change.
+  const ttsJobs: Promise<{ audio: Buffer; mimeType: string }>[] = [];
+  let audioMimeType = "audio/mpeg";
 
-  // ── 4. Synthesise reply as speech ────────────────────────────────────────
-  const { audio, mimeType } = await synthesizeSpeech(assistantMessage.content);
+  const { userMessage, assistantMessage } = await runCompanionExchangePipelined(
+    {
+      conversationId: params.data.id,
+      profile,
+      userContent: transcript,
+      audioMimeType: body.data.mimeType,
+      speakerName,
+    },
+    (sentence) => {
+      ttsJobs.push(
+        synthesizeSpeech(sentence).then((result) => {
+          audioMimeType = result.mimeType;
+          return result;
+        }),
+      );
+    },
+  );
+
+  // Fallback: if streaming produced no sentence boundaries at all (very
+  // short reply with no terminal punctuation), synthesize the full text.
+  if (ttsJobs.length === 0) {
+    ttsJobs.push(synthesizeSpeech(assistantMessage.content));
+  }
+
+  const ttsResults = await Promise.all(ttsJobs);
+  const combinedAudio = Buffer.concat(ttsResults.map((r) => r.audio));
 
   res.status(201).json(
     SendVoiceMessageResponse.parse({
       userMessage,
       assistantMessage,
-      audioBase64: audio.toString("base64"),
-      audioMimeType: mimeType,
+      audioBase64: combinedAudio.toString("base64"),
+      audioMimeType,
       speakerName,
       autoEnrolled,
     }),
