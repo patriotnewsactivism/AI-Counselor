@@ -52,9 +52,9 @@ interface VoiceRecorderProps {
   onSessionChange?: (active: boolean) => void;
 }
 
-const START_THRESHOLD = 0.035;
-const SILENCE_THRESHOLD = 0.022;
-const START_HOLD_MS = 140;
+const START_THRESHOLD = 0.015;
+const SILENCE_THRESHOLD = 0.01;
+const START_HOLD_MS = 120;
 const SILENCE_HOLD_MS = 1050;
 const MIN_TURN_MS = 420;
 const MAX_TURN_MS = 45_000;
