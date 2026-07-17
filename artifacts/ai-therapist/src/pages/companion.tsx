@@ -12,7 +12,8 @@ import { VoiceRecorder, type LiveListenMode, type VoiceRecorderHandle } from "@/
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
-import { Loader2, User, Mic } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Loader2, User, Mic, Square, Pause, Play } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { getListMessagesQueryKey, getListConversationsQueryKey, getGetConversationQueryKey } from "@workspace/api-client-react";
 import { useToast } from "@/hooks/use-toast";
@@ -90,6 +91,7 @@ export default function CompanionPage() {
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isPausedByUser, setIsPausedByUser] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const { toast } = useToast();
@@ -185,6 +187,32 @@ export default function CompanionPage() {
     });
   };
 
+  const handleInterruptAura = () => {
+    const audio = audioRef.current;
+    if (audio) {
+      audio.pause();
+      audio.currentTime = 0;
+    }
+    setIsPlaying(false);
+    setIsPausedByUser(false);
+    recorderRef.current?.resumeListening();
+  };
+
+  const handlePauseAura = () => {
+    audioRef.current?.pause();
+    setIsPausedByUser(true);
+  };
+
+  const handleResumeAura = () => {
+    const audio = audioRef.current;
+    if (audio) {
+      void audio.play().catch((error) => {
+        console.error("Resume playback failed", error);
+      });
+    }
+    setIsPausedByUser(false);
+  };
+
   const ensureConversation = async () => {
     let targetId = conversationId;
     if (!targetId) {
@@ -261,6 +289,7 @@ export default function CompanionPage() {
         audioRef.current.load();
       }
       setIsPlaying(false);
+      setIsPausedByUser(false);
       setIsProcessing(false);
     }
   };
@@ -292,6 +321,23 @@ export default function CompanionPage() {
         </div>
         {isPlaying && <div className="flex items-center gap-1 text-xs text-primary"><span className="h-2 w-2 rounded-full bg-primary animate-pulse" /> Speaking</div>}
       </header>
+
+      {(isPlaying || isPausedByUser) && (
+        <div className="px-4 py-2 border-b border-border/30 bg-background/70 backdrop-blur-sm flex items-center justify-center gap-2 shrink-0">
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={handleInterruptAura}>
+            <Square className="h-3.5 w-3.5" /> Interrupt {companionName}
+          </Button>
+          {isPausedByUser ? (
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={handleResumeAura}>
+              <Play className="h-3.5 w-3.5" /> Resume {companionName}
+            </Button>
+          ) : (
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={handlePauseAura}>
+              <Pause className="h-3.5 w-3.5" /> Pause &amp; speak
+            </Button>
+          )}
+        </div>
+      )}
 
       <ScrollArea className="flex-1 p-4 md:p-8">
         <div className="max-w-3xl mx-auto flex flex-col gap-6 pb-8">
@@ -338,7 +384,7 @@ export default function CompanionPage() {
           ref={recorderRef}
           onSendAudio={handleSendVoice}
           onSendText={handleSendText}
-          isProcessing={isProcessing || isPlaying}
+          isProcessing={isProcessing || isPlaying || isPausedByUser}
           mode={listenMode}
           wakeWord={wakeWord}
           onModeChange={setListenMode}
