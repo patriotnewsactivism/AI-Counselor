@@ -9,14 +9,54 @@ export interface ChatTurn {
   content: string;
 }
 
+const MISTRAL_MODEL = "mistral-small-2506";
 const GROQ_MODEL = "llama-3.3-70b-versatile";
 
-async function groqChat(params: {
+type ChatParams = {
   systemInstruction: string;
   messages: { role: "user" | "assistant"; content: string }[];
   jsonMode?: boolean;
   maxTokens?: number;
-}): Promise<string> {
+};
+
+async function mistralChat(params: ChatParams): Promise<string> {
+  if (!process.env.MISTRAL_API_KEY) {
+    throw new Error("MISTRAL_API_KEY not set");
+  }
+
+  const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.MISTRAL_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: MISTRAL_MODEL,
+      messages: [
+        { role: "system", content: params.systemInstruction },
+        ...params.messages,
+      ],
+      max_tokens: params.maxTokens ?? 2048,
+      ...(params.jsonMode ? { response_format: { type: "json_object" } } : {}),
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(`Mistral API error (${response.status}): ${body.slice(0, 300)}`);
+  }
+
+  const data = (await response.json()) as {
+    choices?: { message?: { content?: string } }[];
+  };
+  const text = data.choices?.[0]?.message?.content;
+  if (!text) {
+    throw new Error("Mistral returned an empty response");
+  }
+  return text;
+}
+
+async function groqChat(params: ChatParams): Promise<string> {
   if (!process.env.GROQ_API_KEY) {
     throw new Error("GROQ_API_KEY must be set to generate companion replies.");
   }
@@ -53,6 +93,27 @@ async function groqChat(params: {
   return text;
 }
 
+/**
+ * Mistral (1B tokens/month free tier) is primary; Groq is the fallback if
+ * Mistral errors or is rate-limited. Keeps the companion up even if either
+ * single provider's free-tier cap gets hit.
+ */
+async function chatWithFallback(params: ChatParams): Promise<string> {
+  try {
+    return await mistralChat(params);
+  } catch (mistralErr) {
+    try {
+      return await groqChat(params);
+    } catch (groqErr) {
+      throw new Error(
+        `All LLM providers failed. Mistral: ${
+          mistralErr instanceof Error ? mistralErr.message : String(mistralErr)
+        } | Groq: ${groqErr instanceof Error ? groqErr.message : String(groqErr)}`,
+      );
+    }
+  }
+}
+
 export async function generateCompanionReply(params: {
   companionName: string;
   preferredName: string | null;
@@ -71,7 +132,7 @@ export async function generateCompanionReply(params: {
     { role: "user" as const, content: params.userMessage },
   ];
 
-  return groqChat({ systemInstruction, messages, maxTokens: 8192 });
+  return chatWithFallback({ systemInstruction, messages, maxTokens: 8192 });
 }
 
 export async function extractMemories(params: {
@@ -82,7 +143,7 @@ export async function extractMemories(params: {
   const prompt = `Existing remembered facts:\n${params.existingMemories.map((m) => `- ${m}`).join("\n") || "(none yet)"}\n\nNew exchange:\nPerson: ${params.userMessage}\nCompanion: ${params.assistantReply}\n\nReturn only NEW facts not already covered above.`;
 
   try {
-    const text = await groqChat({
+    const text = await chatWithFallback({
       systemInstruction: MEMORY_EXTRACTION_INSTRUCTION,
       messages: [{ role: "user", content: prompt }],
       jsonMode: true,
