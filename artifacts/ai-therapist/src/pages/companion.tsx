@@ -268,7 +268,7 @@ export default function CompanionPage() {
       if (failure.kind === "no-speech") {
         toast({ title: "I didn’t catch a clear voice turn", description: "Keep the phone in the foreground and try speaking a little closer to the microphone." });
       } else if (failure.kind === "rate-limit") {
-        toast({ title: "Aura’s free AI limit is temporarily full", description: "The voice recording arrived, but Groq’s free-tier limit is exhausted. Try again after the limit resets." , variant: "destructive" });
+        toast({ title: "Aura’s free AI limit is temporarily full", description: "The voice recording arrived, but a free-tier provider limit was hit. Try again in a bit — this resets automatically." , variant: "destructive" });
       } else if (failure.kind === "auth") {
         toast({ title: "Your session needs to be refreshed", description: "Sign out, sign back in, and try the live conversation again.", variant: "destructive" });
       } else {
