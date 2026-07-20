@@ -1,5 +1,6 @@
 import { ai, GEMINI_MODEL } from "./client";
 import { buildSystemInstruction, MEMORY_EXTRACTION_INSTRUCTION } from "./persona";
+import { fallbackGenerateContent, fallbackGenerateContentStream } from "./fallback";
 
 export { ai, GEMINI_MODEL };
 export { identifyOrEnrollSpeaker, type EnrolledProfile, type SpeakerResult } from "./speaker";
@@ -17,7 +18,10 @@ type ChatParams = {
 };
 
 /**
- * Generates a non-streaming chat completion using Gemini.
+ * Generates a non-streaming chat completion. Tries Gemini first; on any
+ * Gemini failure (rate limit, quota, transient error) falls through to the
+ * free-tier fallback chain (Groq -> Cerebras -> Mistral) so a single
+ * provider outage never takes the whole companion down.
  */
 async function generateContent(params: ChatParams): Promise<string> {
   const contents = params.messages.map((m) => ({
@@ -25,20 +29,30 @@ async function generateContent(params: ChatParams): Promise<string> {
     parts: [{ text: m.content }],
   }));
 
-  const response = await ai.models.generateContent({
-    model: GEMINI_MODEL,
-    contents,
-    config: {
-      systemInstruction: params.systemInstruction,
-      maxOutputTokens: params.maxTokens ?? 2048,
-    },
-  });
+  try {
+    const response = await ai.models.generateContent({
+      model: GEMINI_MODEL,
+      contents,
+      config: {
+        systemInstruction: params.systemInstruction,
+        maxOutputTokens: params.maxTokens ?? 2048,
+      },
+    });
 
-  const text = response.text;
-  if (!text) {
-    throw new Error("Gemini returned an empty response");
+    const text = response.text;
+    if (!text) throw new Error("Gemini returned an empty response");
+    return text;
+  } catch (geminiErr) {
+    console.warn("[gemini] primary call failed, trying fallback chain:", String(geminiErr));
+    try {
+      const { text, provider } = await fallbackGenerateContent(params);
+      console.warn(`[gemini] fallback succeeded via ${provider}`);
+      return text;
+    } catch (fallbackErr) {
+      console.error("[gemini] all providers (Gemini + fallback chain) failed:", String(fallbackErr));
+      throw geminiErr; // surface the original Gemini error, it's the primary path
+    }
   }
-  return text;
 }
 
 /**
@@ -64,6 +78,8 @@ function extractCompleteSentences(buffer: string): { sentences: string[]; remain
  * Streams a chat completion using Gemini, calling onSentence(text) as soon as
  * each complete sentence appears in the stream — well before the full reply
  * finishes generating. Returns the full accumulated text at the end.
+ * Falls through to the streaming fallback chain if Gemini fails before
+ * producing any output.
  */
 async function generateContentStream(
   params: ChatParams,
@@ -76,31 +92,43 @@ async function generateContentStream(
     })),
   ];
 
-  const response = await ai.models.generateContentStream({
-    model: GEMINI_MODEL,
-    contents,
-    config: {
-      systemInstruction: params.systemInstruction,
-      maxOutputTokens: params.maxTokens ?? 2048,
-    },
-  });
+  try {
+    const response = await ai.models.generateContentStream({
+      model: GEMINI_MODEL,
+      contents,
+      config: {
+        systemInstruction: params.systemInstruction,
+        maxOutputTokens: params.maxTokens ?? 2048,
+      },
+    });
 
-  let full = "";
-  let sentenceBuffer = "";
+    let full = "";
+    let sentenceBuffer = "";
 
-  for await (const chunk of response) {
-    const delta = chunk.text ?? "";
-    if (!delta) continue;
-    full += delta;
-    sentenceBuffer += delta;
-    const { sentences, remainder } = extractCompleteSentences(sentenceBuffer);
-    sentenceBuffer = remainder;
-    for (const sentence of sentences) onSentence(sentence);
+    for await (const chunk of response) {
+      const delta = chunk.text ?? "";
+      if (!delta) continue;
+      full += delta;
+      sentenceBuffer += delta;
+      const { sentences, remainder } = extractCompleteSentences(sentenceBuffer);
+      sentenceBuffer = remainder;
+      for (const sentence of sentences) onSentence(sentence);
+    }
+
+    if (sentenceBuffer.trim().length > 0) onSentence(sentenceBuffer.trim());
+    if (!full.trim()) throw new Error("Streamed response was empty");
+    return full;
+  } catch (geminiErr) {
+    console.warn("[gemini] primary stream failed, trying fallback chain:", String(geminiErr));
+    try {
+      const { text, provider } = await fallbackGenerateContentStream(params, onSentence);
+      console.warn(`[gemini] fallback stream succeeded via ${provider}`);
+      return text;
+    } catch (fallbackErr) {
+      console.error("[gemini] all streaming providers (Gemini + fallback chain) failed:", String(fallbackErr));
+      throw geminiErr;
+    }
   }
-
-  if (sentenceBuffer.trim().length > 0) onSentence(sentenceBuffer.trim());
-  if (!full.trim()) throw new Error("Streamed response was empty");
-  return full;
 }
 
 export async function generateCompanionReply(params: {
