@@ -1,13 +1,18 @@
 /**
- * Fallback LLM chain for when Gemini is rate-limited or erroring.
- * All three providers below expose an OpenAI-compatible /chat/completions
- * endpoint, so one shared implementation covers all of them (both
- * non-streaming and streaming variants).
+ * Primary LLM chain for the companion's text replies. Gemini was removed
+ * entirely as of 2026-07-21 -- its free-tier RPM/RPD cap was the direct
+ * cause of repeated "rate limit" errors during voice chats. Every provider
+ * below exposes an OpenAI-compatible /chat/completions endpoint, so one
+ * shared implementation covers all of them (both non-streaming and
+ * streaming variants).
  *
- * Priority order (fastest/most-generous free tiers first):
+ * Priority order (fastest/most-generous free tiers first, paid last resort):
  *   1. Groq        - fast, generous per-model daily caps
- *   2. Cerebras     - equally fast, separate infra (no shared failure point with Groq)
- *   3. Mistral      - much larger raw token budget (~1B tokens/month), used last since it's slower
+ *   2. Cerebras    - equally fast, separate infra (no shared failure point with Groq)
+ *   3. Mistral     - much larger raw token budget (~1B tokens/month), used after the two fastest
+ *   4. Kilo Code   - separate free-tier account/quota, proxies the OpenRouter model catalog
+ *   5. Qwen Cloud  - PAID pay-as-you-go (Alibaba Cloud Model Studio) -- only reached if every
+ *                    free provider above is down/misconfigured
  */
 
 type OAMessage = { role: "system" | "user" | "assistant"; content: string };
@@ -42,6 +47,25 @@ const PROVIDERS: Provider[] = [
     model: "mistral-small-latest",
     supportsJsonMode: true,
   },
+  {
+    // kilocode.ai migrated to kilo.ai -- old host 308-redirects and silently
+    // eats POST bodies on most HTTP clients, so this MUST be kilo.ai directly.
+    name: "kilocode",
+    baseUrl: "https://kilo.ai/api/openrouter/v1/chat/completions",
+    apiKeyEnv: "KILOCODE_API_KEY",
+    model: "meta-llama/llama-3.3-70b-instruct:free",
+    supportsJsonMode: true,
+  },
+  {
+    // Alibaba Cloud Model Studio, international endpoint (not the mainland
+    // Bailian console -- separate account/URL). PAID pay-as-you-go, kept
+    // last since every provider above it is free.
+    name: "qwen",
+    baseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
+    apiKeyEnv: "QWENCLOUD_API_KEY",
+    model: "qwen3-coder-plus",
+    supportsJsonMode: false,
+  },
 ];
 
 function availableProviders(): Provider[] {
@@ -61,7 +85,7 @@ export async function fallbackGenerateContent(params: {
 }): Promise<{ text: string; provider: string }> {
   const providers = availableProviders();
   if (providers.length === 0) {
-    throw new Error("No fallback LLM providers configured (GROQ_API_KEY / CEREBRAS_API_KEY / MISTRAL_API_KEY all missing)");
+    throw new Error("No LLM providers configured (GROQ_API_KEY / CEREBRAS_API_KEY / MISTRAL_API_KEY / KILOCODE_API_KEY / QWENCLOUD_API_KEY all missing)");
   }
 
   const oaMessages: OAMessage[] = [
@@ -124,7 +148,7 @@ export async function fallbackGenerateContentStream(
 ): Promise<{ text: string; provider: string }> {
   const providers = availableProviders();
   if (providers.length === 0) {
-    throw new Error("No fallback LLM providers configured (GROQ_API_KEY / CEREBRAS_API_KEY / MISTRAL_API_KEY all missing)");
+    throw new Error("No LLM providers configured (GROQ_API_KEY / CEREBRAS_API_KEY / MISTRAL_API_KEY / KILOCODE_API_KEY / QWENCLOUD_API_KEY all missing)");
   }
 
   const oaMessages: OAMessage[] = [
