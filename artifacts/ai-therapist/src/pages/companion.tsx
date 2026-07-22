@@ -390,6 +390,7 @@ export default function CompanionPage() {
           onModeChange={setListenMode}
           onWakeWordChange={setWakeWord}
           onSessionChange={handleSessionChange}
+          onWakeInterrupt={handleInterruptAura}
         />
       </div>
     </div>

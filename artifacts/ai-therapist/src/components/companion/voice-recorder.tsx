@@ -50,6 +50,9 @@ interface VoiceRecorderProps {
   onModeChange: (mode: LiveListenMode) => void;
   onWakeWordChange: (wakeWord: string) => void;
   onSessionChange?: (active: boolean) => void;
+  /** Called the instant the wake word is heard while isProcessing is true
+   * (Aura thinking or speaking) — the parent should stop playback immediately. */
+  onWakeInterrupt?: () => void;
 }
 
 const START_THRESHOLD = 0.026;
@@ -93,6 +96,7 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
       onModeChange,
       onWakeWordChange,
       onSessionChange,
+      onWakeInterrupt,
     },
     ref,
   ) {
@@ -124,12 +128,69 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
     const wakeWordRef = useRef(wakeWord);
     const modeRef = useRef(mode);
     const onSessionChangeRef = useRef(onSessionChange);
+    const onWakeInterruptRef = useRef(onWakeInterrupt);
+    const interruptRecognitionRef = useRef<WakeRecognition | null>(null);
+    const interruptRestartTimerRef = useRef<number | null>(null);
 
     useEffect(() => {
       wakeWordRef.current = wakeWord;
       modeRef.current = mode;
       onSessionChangeRef.current = onSessionChange;
-    }, [mode, onSessionChange, wakeWord]);
+      onWakeInterruptRef.current = onWakeInterrupt;
+    }, [mode, onSessionChange, wakeWord, onWakeInterrupt]);
+
+    // Say-the-name-to-interrupt: while Aura is thinking or speaking, run a
+    // dedicated wake-word listener (separate from the turn-starting one)
+    // that fires onWakeInterrupt the instant the name is heard, so she stops
+    // talking immediately instead of finishing her sentence.
+    const stopInterruptRecognition = () => {
+      if (interruptRestartTimerRef.current !== null) {
+        window.clearTimeout(interruptRestartTimerRef.current);
+        interruptRestartTimerRef.current = null;
+      }
+      const recognition = interruptRecognitionRef.current;
+      interruptRecognitionRef.current = null;
+      if (recognition) {
+        try { recognition.onend = null; recognition.abort(); } catch { /* already stopped */ }
+      }
+    };
+
+    const startInterruptRecognition = () => {
+      if (!sessionActiveRef.current || !isProcessingRef.current || interruptRecognitionRef.current) return;
+      const Recognition = wakeRecognitionConstructor();
+      if (!Recognition) return;
+      const recognition = new Recognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = "en-US";
+      recognition.onresult = (event) => {
+        const configuredWakeWord = wakeWordRef.current.trim().toLocaleLowerCase() || "aura";
+        for (let index = 0; index < event.results.length; index += 1) {
+          const transcript = event.results[index]?.[0]?.transcript?.trim().toLocaleLowerCase() || "";
+          if (transcript.includes(configuredWakeWord)) {
+            stopInterruptRecognition();
+            onWakeInterruptRef.current?.();
+            break;
+          }
+        }
+      };
+      recognition.onerror = (event) => {
+        if (event.error !== "not-allowed" && event.error !== "service-not-allowed") {
+          interruptRestartTimerRef.current = window.setTimeout(() => {
+            interruptRecognitionRef.current = null;
+            startInterruptRecognition();
+          }, 500);
+        }
+      };
+      recognition.onend = () => {
+        interruptRecognitionRef.current = null;
+        if (sessionActiveRef.current && isProcessingRef.current) {
+          interruptRestartTimerRef.current = window.setTimeout(startInterruptRecognition, 300);
+        }
+      };
+      interruptRecognitionRef.current = recognition;
+      try { recognition.start(); } catch { interruptRecognitionRef.current = null; }
+    };
 
     useEffect(() => {
       isProcessingRef.current = isProcessing;
@@ -139,6 +200,9 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
           turnStateRef.current = "processing";
           setTurnState("processing");
         }
+        if (sessionActiveRef.current) startInterruptRecognition();
+      } else {
+        stopInterruptRecognition();
       }
     }, [isProcessing]);
 
@@ -232,6 +296,7 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
 
     const releaseMicrophone = () => {
       stopWakeRecognition();
+      stopInterruptRecognition();
       stopMonitor();
       if (durationTimerRef.current !== null) {
         window.clearInterval(durationTimerRef.current);
@@ -570,21 +635,44 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
                 </>
               )}
               <button
-                onClick={() => { if (sessionActive) stopRecording(); else void startRecording(); }}
+                onClick={() => {
+                  // While Aura is transcribing/thinking/speaking, this button is
+                  // deliberately inert. Ending the whole live session on an
+                  // accidental/habitual tap here (instead of using the dedicated
+                  // Interrupt control) was the root cause of the live session
+                  // dying mid-turn and needing a manual restart.
+                  if (sessionActive && turnState === "processing") return;
+                  if (sessionActive) stopRecording();
+                  else void startRecording();
+                }}
                 disabled={!sessionActive && isProcessing}
-                aria-label={sessionActive ? "End live conversation" : "Start live conversation"}
+                aria-label={sessionActive ? (turnState === "processing" ? "Aura is responding" : "End live conversation") : "Start live conversation"}
                 className={cn(
                   "relative z-10 flex items-center justify-center h-24 w-24 rounded-full transition-all duration-300 shadow-lg",
-                  sessionActive ? "bg-destructive text-destructive-foreground scale-110" : isProcessing ? "bg-card border-2 border-border text-muted-foreground cursor-not-allowed" : "bg-primary text-primary-foreground hover:scale-105 hover:shadow-xl",
+                  sessionActive
+                    ? turnState === "processing"
+                      ? "bg-card border-2 border-amber-500/50 text-amber-600 cursor-default"
+                      : "bg-destructive text-destructive-foreground scale-110"
+                    : isProcessing
+                      ? "bg-card border-2 border-border text-muted-foreground cursor-not-allowed"
+                      : "bg-primary text-primary-foreground hover:scale-105 hover:shadow-xl",
                 )}
               >
-                {sessionActive ? <Square className="h-8 w-8 fill-current" /> : isProcessing ? <Loader2 className="h-10 w-10 animate-spin" /> : <Mic className="h-10 w-10" />}
+                {sessionActive
+                  ? turnState === "processing"
+                    ? <Volume2 className="h-9 w-9" />
+                    : <Square className="h-8 w-8 fill-current" />
+                  : isProcessing ? <Loader2 className="h-10 w-10 animate-spin" /> : <Mic className="h-10 w-10" />}
               </button>
             </div>
 
             <div className="flex flex-col items-center gap-1 text-center min-h-10">
               <span className={cn("text-sm font-medium", sessionActive ? "text-primary" : "text-muted-foreground")}>
-                {sessionActive ? "End live conversation" : "Start live conversation"}
+                {sessionActive
+                  ? turnState === "processing"
+                    ? `Say "${wakeWord.trim() || "Aura"}" or tap Interrupt to cut in`
+                    : "End live conversation"
+                  : "Start live conversation"}
               </span>
               {sessionActive && (
                 <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
