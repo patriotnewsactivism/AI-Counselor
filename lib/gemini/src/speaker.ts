@@ -61,6 +61,13 @@ export async function identifyOrEnrollSpeaker(params: {
   parts.push({ inlineData: { mimeType: newMimeType, data: newAudioBase64 } });
   parts.push({ text: 'Now output the JSON object.' });
 
+  if (!ai) {
+    // No GEMINI_API_KEY configured -- voice speaker-ID is a best-effort
+    // enhancement layered on top of the main text chat, which no longer
+    // depends on Gemini at all. Skip cleanly rather than erroring.
+    return { matchedProfileId: null, matchedName: null, introducedName: null };
+  }
+
   try {
     const response = await ai.models.generateContent({
       model: GEMINI_MODEL,
