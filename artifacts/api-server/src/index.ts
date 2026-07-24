@@ -1,5 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
+import { handleVoiceStreamUpgrade } from "./routes/conversations/voiceStream";
 
 const rawPort = process.env["PORT"];
 
@@ -15,7 +16,7 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-app.listen(port, (err) => {
+const server = app.listen(port, (err) => {
   if (err) {
     logger.error({ err }, "Error listening on port");
     process.exit(1);
@@ -23,3 +24,8 @@ app.listen(port, (err) => {
 
   logger.info({ port }, "Server listening");
 });
+
+// Streaming voice pipeline (Grok STT/TTS) rides the same HTTP server via a
+// raw WebSocket upgrade -- kept separate from Express routing since it's a
+// persistent duplex connection, not a request/response route.
+server.on("upgrade", handleVoiceStreamUpgrade);
