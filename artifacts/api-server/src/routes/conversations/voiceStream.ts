@@ -64,6 +64,18 @@ export function handleVoiceStreamUpgrade(
     return;
   }
 
+  // Cross-origin gotcha: the frontend (Vercel) and this API (Railway) are
+  // different origins, and the frontend authenticates via a Clerk Bearer
+  // token (session.getToken()), not cookies. Native browser WebSocket()
+  // cannot send custom headers on the handshake, so the client must instead
+  // pass the token as a query param -- inject it as a real Authorization
+  // header on the raw request before running Clerk's normal verification,
+  // so getAuth() below works exactly like it does for every HTTP route.
+  const token = url.searchParams.get("token");
+  if (token) {
+    req.headers.authorization = `Bearer ${token}`;
+  }
+
   // Clerk's auth normally runs as Express middleware on a real req/res cycle.
   // At the raw HTTP-upgrade stage there is no Express response object yet,
   // so we run clerkMiddleware() manually against this IncomingMessage with a
