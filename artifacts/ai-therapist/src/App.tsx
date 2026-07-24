@@ -110,6 +110,13 @@ function ProtectedRoute({ component: Component }: { component: any }) {
   );
 }
 
+// Stable route components. Defining these at module scope (instead of inline
+// arrows in the <Route> elements) keeps their identity constant across renders,
+// so wouter never remounts the page just because the parent re-rendered.
+const CompanionRoute = () => <ProtectedRoute component={CompanionPage} />;
+const MemoriesRoute = () => <ProtectedRoute component={MemoriesPage} />;
+const SettingsRoute = () => <ProtectedRoute component={SettingsPage} />;
+
 function ClerkQueryClientCacheInvalidator() {
   const { addListener, session } = useClerk();
   const queryClient = useQueryClient();
@@ -176,10 +183,15 @@ function ClerkProviderWithRoutes() {
             <Route path="/sign-in/*?" component={SignInPage} />
             <Route path="/sign-up/*?" component={SignUpPage} />
             
-            <Route path="/companion" component={() => <ProtectedRoute component={CompanionPage} />} />
-            <Route path="/companion/:id" component={() => <ProtectedRoute component={CompanionPage} />} />
-            <Route path="/memories" component={() => <ProtectedRoute component={MemoriesPage} />} />
-            <Route path="/settings" component={() => <ProtectedRoute component={SettingsPage} />} />
+            {/* A single route for both /companion and /companion/:id so that
+                creating a conversation (which navigates from /companion to
+                /companion/<id>) does NOT unmount and remount the page. The old
+                two-route split remounted CompanionPage on the first turn, whose
+                cleanup tore down the live microphone — the root cause of the
+                session "kicking off" every time you spoke. */}
+            <Route path="/companion/:id?" component={CompanionRoute} />
+            <Route path="/memories" component={MemoriesRoute} />
+            <Route path="/settings" component={SettingsRoute} />
             
             <Route component={NotFound} />
           </Switch>
