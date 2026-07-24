@@ -7,3 +7,5 @@ tools:
             - pnpm run *
             - pnpm approve-builds
             - pnpm install *
+            - sleep 10
+            - powershell *
