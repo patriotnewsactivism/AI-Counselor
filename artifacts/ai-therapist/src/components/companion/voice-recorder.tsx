@@ -636,22 +636,26 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
               )}
               <button
                 onClick={() => {
-                  // While Aura is transcribing/thinking/speaking, this button is
-                  // deliberately inert. Ending the whole live session on an
-                  // accidental/habitual tap here (instead of using the dedicated
-                  // Interrupt control) was the root cause of the live session
-                  // dying mid-turn and needing a manual restart.
-                  if (sessionActive && turnState === "processing") return;
+                  // While Aura is transcribing/thinking/speaking, a tap on this
+                  // button no longer ends the whole session (that was the root
+                  // cause of the live session dying mid-turn on a stray/habitual
+                  // tap). Instead it acts as Interrupt: stop her playback and
+                  // resume listening right away, same as saying the wake word.
+                  if (sessionActive && turnState === "processing") {
+                    stopInterruptRecognition();
+                    onWakeInterruptRef.current?.();
+                    return;
+                  }
                   if (sessionActive) stopRecording();
                   else void startRecording();
                 }}
                 disabled={!sessionActive && isProcessing}
-                aria-label={sessionActive ? (turnState === "processing" ? "Aura is responding" : "End live conversation") : "Start live conversation"}
+                aria-label={sessionActive ? (turnState === "processing" ? "Interrupt Aura" : "End live conversation") : "Start live conversation"}
                 className={cn(
                   "relative z-10 flex items-center justify-center h-24 w-24 rounded-full transition-all duration-300 shadow-lg",
                   sessionActive
                     ? turnState === "processing"
-                      ? "bg-card border-2 border-amber-500/50 text-amber-600 cursor-default"
+                      ? "bg-card border-2 border-amber-500/50 text-amber-600 hover:scale-105 hover:shadow-xl"
                       : "bg-destructive text-destructive-foreground scale-110"
                     : isProcessing
                       ? "bg-card border-2 border-border text-muted-foreground cursor-not-allowed"
@@ -670,7 +674,7 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
               <span className={cn("text-sm font-medium", sessionActive ? "text-primary" : "text-muted-foreground")}>
                 {sessionActive
                   ? turnState === "processing"
-                    ? `Say "${wakeWord.trim() || "Aura"}" or tap Interrupt to cut in`
+                    ? `Say "${wakeWord.trim() || "Aura"}" or tap to cut in`
                     : "End live conversation"
                   : "Start live conversation"}
               </span>
