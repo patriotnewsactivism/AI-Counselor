@@ -27,13 +27,15 @@ import { forwardRef, useImperativeHandle, useRef, useState } from "react";
 export type StreamTurnState = "idle" | "connecting" | "listening" | "speaking" | "error";
 
 export interface VoiceStreamRecorderHandle {
-  start: () => Promise<void>;
+  /** conversationId must be the freshly-resolved id (e.g. from
+   * ensureConversation()), passed directly rather than as a prop, since
+   * async navigation to a brand-new conversation's URL would otherwise
+   * still be stale at the instant start() runs. */
+  start: (conversationId: number) => Promise<void>;
   stop: () => void;
 }
 
 interface VoiceStreamRecorderProps {
-  /** Existing conversation id -- caller must create the conversation first. */
-  conversationId: number;
   /** Base WS URL for the API, e.g. wss://therapist-api.up.railway.app (no path). */
   wsBaseUrl: string;
   /** Returns a fresh Clerk session JWT, or null if unavailable. */
@@ -90,7 +92,7 @@ function floatTo16kPcm(input: Float32Array, inRate: number): ArrayBuffer {
 
 export const VoiceStreamRecorder = forwardRef<VoiceStreamRecorderHandle, VoiceStreamRecorderProps>(
   function VoiceStreamRecorder(
-    { conversationId, wsBaseUrl, getToken, onTurnStateChange, onTranscript, onAssistantSentence, onAssistantDone, onError },
+    { wsBaseUrl, getToken, onTurnStateChange, onTranscript, onAssistantSentence, onAssistantDone, onError },
     ref,
   ) {
     const [, setTurnStateState] = useState<StreamTurnState>("idle");
@@ -160,7 +162,7 @@ export const VoiceStreamRecorder = forwardRef<VoiceStreamRecorderHandle, VoiceSt
       setTurnState("idle");
     };
 
-    const start = async () => {
+    const start = async (conversationId: number) => {
       if (activeRef.current) return;
       setTurnState("connecting");
       try {

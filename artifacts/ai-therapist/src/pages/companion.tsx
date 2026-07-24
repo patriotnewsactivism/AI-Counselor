@@ -9,6 +9,8 @@ import {
   useGetProfile,
 } from "@workspace/api-client-react";
 import { VoiceRecorder, type LiveListenMode, type VoiceRecorderHandle } from "@/components/companion/voice-recorder";
+import { VoiceStreamRecorder, type VoiceStreamRecorderHandle, type StreamTurnState } from "@/components/companion/voice-stream-recorder";
+import { useAuth } from "@clerk/react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
@@ -20,7 +22,24 @@ import { useToast } from "@/hooks/use-toast";
 
 const LIVE_MODE_KEY = "ai-therapist:liveListenMode";
 const WAKE_WORD_KEY = "ai-therapist:wakeWord";
+const GROK_BETA_KEY = "ai-therapist:grokVoiceBeta";
 const RESTART_LISTEN_DELAY_MS = 450;
+
+/** wss://<api host> derived from the same VITE_API_URL the rest of the app
+ * uses for HTTP calls (see main.tsx). Empty in local dev, where Vite proxies
+ * same-origin -- the beta toggle is hidden in that case since there's no
+ * separate API origin to build a WS URL from. */
+function deriveWsBaseUrl(): string | null {
+  const apiUrl = import.meta.env.VITE_API_URL;
+  if (!apiUrl) return null;
+  try {
+    const url = new URL(apiUrl);
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
 
 type VoiceFailureKind = "no-speech" | "rate-limit" | "auth" | "server" | "unknown";
 
@@ -96,7 +115,16 @@ export default function CompanionPage() {
   const [isProcessing, setIsProcessing] = useState(false);
   const { toast } = useToast();
   const recorderRef = useRef<VoiceRecorderHandle>(null);
+  const streamRecorderRef = useRef<VoiceStreamRecorderHandle>(null);
   const liveSessionRef = useRef(false);
+  const { getToken } = useAuth();
+  const wsBaseUrl = deriveWsBaseUrl();
+  const [useGrokBeta, setUseGrokBeta] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(GROK_BETA_KEY) === "1";
+  });
+  const [streamState, setStreamState] = useState<StreamTurnState>("idle");
+  const [streamTranscript, setStreamTranscript] = useState("");
 
   const [listenMode, setListenMode] = useState<LiveListenMode>(() => {
     if (typeof window === "undefined") return "always";
@@ -132,6 +160,10 @@ export default function CompanionPage() {
   useEffect(() => {
     window.localStorage.setItem(LIVE_MODE_KEY, listenMode);
   }, [listenMode]);
+
+  useEffect(() => {
+    window.localStorage.setItem(GROK_BETA_KEY, useGrokBeta ? "1" : "0");
+  }, [useGrokBeta]);
 
   useEffect(() => {
     const normalized = wakeWord.trim().replace(/\s+/g, " ").slice(0, 32);
@@ -280,6 +312,26 @@ export default function CompanionPage() {
     }
   };
 
+  const startGrokStream = async () => {
+    if (!wsBaseUrl) return;
+    setIsProcessing(true);
+    try {
+      const targetId = await ensureConversation();
+      setIsProcessing(false);
+      if (targetId == null) throw new Error("No conversation id");
+      await streamRecorderRef.current?.start(targetId);
+    } catch (error) {
+      console.error("Failed to start Grok voice stream", error);
+      toast({ title: "Couldn't start the beta voice stream", description: "Please try again.", variant: "destructive" });
+      setIsProcessing(false);
+    }
+  };
+
+  const stopGrokStream = () => {
+    streamRecorderRef.current?.stop();
+    setStreamTranscript("");
+  };
+
   const handleSessionChange = (active: boolean) => {
     liveSessionRef.current = active;
     if (!active) {
@@ -380,18 +432,87 @@ export default function CompanionPage() {
       </ScrollArea>
 
       <div className="p-4 md:p-6 bg-gradient-to-t from-background via-background to-transparent shrink-0 border-t border-border/10">
-        <VoiceRecorder
-          ref={recorderRef}
-          onSendAudio={handleSendVoice}
-          onSendText={handleSendText}
-          isProcessing={isProcessing || isPlaying || isPausedByUser}
-          mode={listenMode}
-          wakeWord={wakeWord}
-          onModeChange={setListenMode}
-          onWakeWordChange={setWakeWord}
-          onSessionChange={handleSessionChange}
-          onWakeInterrupt={handleInterruptAura}
-        />
+        {wsBaseUrl && (
+          <div className="flex items-center justify-end gap-2 mb-2 text-xs text-muted-foreground">
+            <label htmlFor="grok-voice-beta" className="cursor-pointer select-none">
+              Grok voice (beta)
+            </label>
+            <input
+              id="grok-voice-beta"
+              type="checkbox"
+              className="accent-primary"
+              checked={useGrokBeta}
+              onChange={(event) => {
+                stopGrokStream();
+                setUseGrokBeta(event.target.checked);
+              }}
+            />
+          </div>
+        )}
+
+        {useGrokBeta && wsBaseUrl ? (
+          <div className="flex flex-col items-center gap-3">
+            {streamTranscript && (
+              <p className="text-sm text-muted-foreground text-center max-w-md">{streamTranscript}</p>
+            )}
+            <Button
+              size="lg"
+              className="gap-2 rounded-full h-14 w-14 p-0"
+              variant={streamState === "idle" || streamState === "error" ? "default" : "outline"}
+              onClick={() => {
+                if (streamState === "idle" || streamState === "error") {
+                  void startGrokStream();
+                } else {
+                  stopGrokStream();
+                }
+              }}
+            >
+              {streamState === "connecting" ? (
+                <Loader2 className="h-5 w-5 animate-spin" />
+              ) : streamState === "idle" || streamState === "error" ? (
+                <Mic className="h-5 w-5" />
+              ) : (
+                <Square className="h-5 w-5" />
+              )}
+            </Button>
+            <p className="text-xs text-muted-foreground">
+              {streamState === "listening"
+                ? "Listening…"
+                : streamState === "speaking"
+                  ? `${companionName} is speaking…`
+                  : streamState === "connecting"
+                    ? "Connecting…"
+                    : streamState === "error"
+                      ? "Something went wrong — tap to retry"
+                      : "Tap to start a live conversation"}
+            </p>
+            <VoiceStreamRecorder
+              ref={streamRecorderRef}
+              wsBaseUrl={wsBaseUrl}
+              getToken={getToken}
+              onTurnStateChange={setStreamState}
+              onTranscript={(text, isFinal) => setStreamTranscript(isFinal ? "" : text)}
+              onAssistantSentence={() => setStreamTranscript("")}
+              onAssistantDone={() => {
+                if (conversationId) queryClient.invalidateQueries({ queryKey: getListMessagesQueryKey(conversationId) });
+              }}
+              onError={(message) => toast({ title: "Voice stream error", description: message, variant: "destructive" })}
+            />
+          </div>
+        ) : (
+          <VoiceRecorder
+            ref={recorderRef}
+            onSendAudio={handleSendVoice}
+            onSendText={handleSendText}
+            isProcessing={isProcessing || isPlaying || isPausedByUser}
+            mode={listenMode}
+            wakeWord={wakeWord}
+            onModeChange={setListenMode}
+            onWakeWordChange={setWakeWord}
+            onSessionChange={handleSessionChange}
+            onWakeInterrupt={handleInterruptAura}
+          />
+        )}
       </div>
     </div>
   );
