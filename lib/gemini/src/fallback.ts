@@ -82,15 +82,18 @@ const PROVIDERS: Provider[] = [
     model: "openai/gpt-oss-120b",
     supportsJsonMode: true,
   },
-  // 70B, but an OpenRouter ":free" pool — capable yet aggressively throttled,
-  // so it sits below the dedicated 120B tiers.
+  // Kilo's auto-router. The previous pin, meta-llama/llama-3.3-70b-instruct:free,
+  // now 404s with error_type "discontinued_free_model" -- Kilo ended that
+  // model's free period and its own error names kilo-auto/free as the
+  // replacement, so we follow that rather than pinning another model that can
+  // be retired out from under us the same way.
   {
     // kilocode.ai migrated to kilo.ai -- old host 308-redirects and silently
     // eats POST bodies on most HTTP clients, so this MUST be kilo.ai directly.
     name: "kilocode",
     baseUrl: "https://kilo.ai/api/openrouter/v1/chat/completions",
     apiKeyEnv: "KILOCODE_API_KEY",
-    model: "meta-llama/llama-3.3-70b-instruct:free",
+    model: "kilo-auto/free",
     supportsJsonMode: true,
   },
   // 70B — Groq's outgoing flagship, still serving until 2026-08-16.
@@ -125,31 +128,22 @@ const PROVIDERS: Provider[] = [
     model: "mistral-small-latest",
     supportsJsonMode: true,
   },
-  // 8B — weakest, and deprecated. Last free rung before we start paying.
-  {
-    name: "cerebras-llama3.1-8b",
-    baseUrl: CEREBRAS_URL,
-    apiKeyEnv: "CEREBRAS_API_KEY",
-    model: "llama3.1-8b",
-    supportsJsonMode: false,
-  },
+  // NOTE: cerebras llama3.1-8b used to sit here as the last free rung. It is
+  // gone, not merely deprecated -- Cerebras now answers model_not_found for
+  // it -- so keeping it only burned a round-trip on the way down the chain.
   // Alibaba Cloud Model Studio, international endpoint (not the mainland
   // Bailian console -- separate account/URL). PAID pay-as-you-go, kept last
-  // since every provider above it is free. qwen3-coder-plus is a
-  // code-specialised model and a poor fit for an empathetic companion, so a
-  // general chat model leads and the coder model stays only as a backstop.
+  // since every provider above it is free.
+  //
+  // qwen3-coder-plus was the original pin here and has been dropped: it is a
+  // code-specialised model doing empathetic conversation, and it answers 403
+  // "free quota has been exhausted" anyway. qwen-plus is the general chat
+  // model and currently the only one of the pair that responds.
   {
     name: "qwen-plus",
     baseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
     apiKeyEnv: "QWENCLOUD_API_KEY",
     model: "qwen-plus",
-    supportsJsonMode: false,
-  },
-  {
-    name: "qwen-coder",
-    baseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
-    apiKeyEnv: "QWENCLOUD_API_KEY",
-    model: "qwen3-coder-plus",
     supportsJsonMode: false,
   },
 ];
