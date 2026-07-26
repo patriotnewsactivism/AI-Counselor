@@ -12,6 +12,7 @@ import LandingPage from '@/pages/landing';
 import { SignInPage, SignUpPage } from '@/pages/auth';
 import CompanionPage from '@/pages/companion';
 import MemoriesPage from '@/pages/memories';
+import HistoryPage from '@/pages/history';
 import SettingsPage from '@/pages/settings';
 import AppLayout from '@/components/layout/app-layout';
 
@@ -115,6 +116,7 @@ function ProtectedRoute({ component: Component }: { component: any }) {
 // so wouter never remounts the page just because the parent re-rendered.
 const CompanionRoute = () => <ProtectedRoute component={CompanionPage} />;
 const MemoriesRoute = () => <ProtectedRoute component={MemoriesPage} />;
+const HistoryRoute = () => <ProtectedRoute component={HistoryPage} />;
 const SettingsRoute = () => <ProtectedRoute component={SettingsPage} />;
 
 function ClerkQueryClientCacheInvalidator() {
@@ -191,6 +193,7 @@ function ClerkProviderWithRoutes() {
                 session "kicking off" every time you spoke. */}
             <Route path="/companion/:id?" component={CompanionRoute} />
             <Route path="/memories" component={MemoriesRoute} />
+            <Route path="/history" component={HistoryRoute} />
             <Route path="/settings" component={SettingsRoute} />
             
             <Route component={NotFound} />

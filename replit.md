@@ -45,7 +45,8 @@ A warm, voice-first AI companion web app. Users talk (and type) with a calm, gro
 
 - Voice-first conversational companion: record a voice message, get a spoken reply back (Deepgram STT → Gemini → Deepgram TTS), with text chat as a fallback.
 - Persistent memory: the companion recalls durable facts across conversations and sessions, scoped per Clerk account.
-- Conversation history: multiple named conversations per user, browsable and deletable.
+- Conversation history: multiple named conversations per user, browsable via a dedicated History page and deletable. Users can set an optional History PIN (Settings → History PIN) — separate from their account password — that must be entered before the History page's conversation list loads. See `lib/api-spec/openapi.yaml` (`history` tag) and `artifacts/api-server/src/lib/historyAccess.ts`.
+- Live voice turn-taking: by default the browser's own speech endpointing decides when a turn ends (silence-based). Users can instead opt into "wait for a keyword" mode (`live-conversation.tsx`), which keeps listening through pauses until a spoken keyword (default "over") ends the turn — useful for anyone who pauses mid-thought.
 - Crisis-language safeguards are built into the persona's system instruction, not just UI copy.
 
 ## User preferences
@@ -56,6 +57,8 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 - `@deepgram/sdk` v5 is a fern-generated SDK, structurally unrelated to older v3 docs/examples — always check the installed `.d.ts` files directly rather than trusting prior knowledge (see `.agents/memory/deepgram-sdk-v5.md`).
 - `build.mjs`'s esbuild `external` list globs `@google-cloud/*` but must NOT glob `@google/*` — that would also externalize `@google/genai`, which then fails to resolve at runtime since it's not a direct dependency of `api-server`.
+- `profiles.historyPinHash` (added for the History PIN feature) requires `pnpm --filter @workspace/db run push` against the dev database before the API server will start cleanly against it.
+- The History PIN gate only protects `GET /conversations` (the browsing/list surface). Opening a specific conversation by id, or its messages, stays ungated — needed so an active/just-created chat keeps working without re-entering the PIN. This is a deliberate scope decision, not an oversight.
 
 ## Pointers
 

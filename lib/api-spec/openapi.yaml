@@ -20,6 +20,8 @@ tags:
     description: Summary stats
   - name: voice-profiles
     description: Persistent voice recognition profiles
+  - name: history
+    description: History PIN — gates access to past conversations
 paths:
   /healthz:
     get:
@@ -278,6 +280,70 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/VoiceProfile"
+  /history/pin:
+    post:
+      operationId: setHistoryPin
+      tags: [history]
+      summary: Set or change the History PIN that gates access to past conversations
+      description: >
+        If a PIN is already set, currentPin must be supplied and correct.
+        On success, immediately unlocks history for the caller (same as
+        unlockHistory) so the PIN doesn't have to be re-entered right after
+        setting it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HistoryPinInput"
+      responses:
+        "200":
+          description: PIN set; history unlocked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HistoryTokenResponse"
+        "403":
+          description: currentPin missing or incorrect
+    delete:
+      operationId: removeHistoryPin
+      tags: [history]
+      summary: Remove the History PIN, returning history to unprotected
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HistoryPinRemovalInput"
+      responses:
+        "204":
+          description: PIN removed (or was never set)
+        "403":
+          description: currentPin incorrect
+  /history/unlock:
+    post:
+      operationId: unlockHistory
+      tags: [history]
+      summary: Verify the History PIN and obtain a short-lived unlock token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HistoryUnlockInput"
+      responses:
+        "200":
+          description: Correct PIN — unlock token issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HistoryTokenResponse"
+        "400":
+          description: No History PIN is configured
+        "401":
+          description: Incorrect PIN
+        "429":
+          description: Too many failed attempts — temporarily locked out
   /voice-profiles/{id}:
     patch:
       operationId: updateVoiceProfile
@@ -330,11 +396,14 @@ components:
         - status
     Profile:
       type: object
-      required: [userId, companionName, createdAt, updatedAt]
+      required: [userId, companionName, historyPinEnabled, createdAt, updatedAt]
       properties:
         userId: { type: string }
         preferredName: { type: ["string", "null"] }
         companionName: { type: string }
+        historyPinEnabled:
+          type: boolean
+          description: True if a History PIN is configured, gating access to past conversations
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
     ProfileUpdate:
@@ -435,3 +504,32 @@ components:
       required: [name]
       properties:
         name: { type: string, minLength: 1 }
+    HistoryPinInput:
+      type: object
+      required: [pin]
+      properties:
+        pin:
+          type: string
+          pattern: "^[0-9]{4,8}$"
+          description: New 4-8 digit numeric PIN
+        currentPin:
+          type: string
+          description: Required (and must be correct) when a PIN is already set
+    HistoryPinRemovalInput:
+      type: object
+      required: [currentPin]
+      properties:
+        currentPin: { type: string }
+    HistoryUnlockInput:
+      type: object
+      required: [pin]
+      properties:
+        pin: { type: string }
+    HistoryTokenResponse:
+      type: object
+      required: [token, expiresAt]
+      properties:
+        token:
+          type: string
+          description: Opaque signed token — send as the X-History-Token header
+        expiresAt: { type: string, format: date-time }

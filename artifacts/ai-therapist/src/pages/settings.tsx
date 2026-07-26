@@ -14,6 +14,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { VoiceProfilesSection } from "@/components/settings/voice-profiles";
+import { HistoryPinSection } from "@/components/settings/history-pin";
 
 export default function SettingsPage() {
   const { data: profile, isLoading: isLoadingProfile } = useGetProfile();
@@ -157,6 +158,8 @@ export default function SettingsPage() {
           </section>
 
           <VoiceProfilesSection />
+
+          <HistoryPinSection />
 
           <section className="pt-8 border-t border-border mt-4">
             <p className="text-xs text-muted-foreground text-center">
