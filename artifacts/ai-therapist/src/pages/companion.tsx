@@ -14,10 +14,19 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Loader2, User, Mic, Square } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Loader2, User, Mic, Square, Settings2 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { getListMessagesQueryKey, getListConversationsQueryKey, getGetConversationQueryKey } from "@workspace/api-client-react";
 import { useToast } from "@/hooks/use-toast";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 
 const GROK_BETA_KEY = "ai-therapist:grokVoiceBeta";
 
@@ -53,6 +62,10 @@ export default function CompanionPage() {
   });
   const [streamState, setStreamState] = useState<StreamTurnState>("idle");
   const [streamTranscript, setStreamTranscript] = useState("");
+  const [keyword, setKeyword] = useState(() => {
+    if (typeof window === "undefined") return "";
+    return window.localStorage.getItem("ai-therapist:keyword") || "";
+  });
 
   const isNew = !id;
   const conversationId = isNew ? null : parseInt(id, 10);
@@ -79,29 +92,15 @@ export default function CompanionPage() {
     window.localStorage.setItem(GROK_BETA_KEY, useGrokBeta ? "1" : "0");
   }, [useGrokBeta]);
 
-  // ensureConversation/sendConversationTurn must NEVER be read through a
-  // plain closed-over `conversationId`. LiveConversation's live-voice loop
-  // is not driven by React re-renders at all -- it's a self-perpetuating
-  // chain of SpeechRecognition callbacks (onend -> scheduleRestart ->
-  // startRecognition -> new onresult/onend) all rooted in whichever render
-  // was active the moment the mic button was tapped. If that tap happened
-  // on a brand-new conversation (conversationId still null), EVERY turn for
-  // the rest of that live session would see that same frozen null forever,
-  // since nothing in the callback chain ever re-derives a fresh closure
-  // from a later render -- so every single turn created its own new
-  // conversation, silently discarding all prior context each time. A ref is
-  // a stable object whose `.current` is always the latest value no matter
-  // how stale the closure reading it is, which is exactly what's needed
-  // here. (The Grok/WS voice path sidesteps this differently, by resolving
-  // the id once and passing it as a direct start() argument instead of a
-  // prop -- see startGrokStream below. Same underlying hazard, different
-  // fix shape because that path is one persistent connection per call
-  // rather than one REST round-trip per turn.)
-  const conversationIdRef = useRef<number | null>(conversationId);
   useEffect(() => {
-    conversationIdRef.current = conversationId;
-  }, [conversationId]);
+    window.localStorage.setItem("ai-therapist:keyword", keyword);
+  }, [keyword]);
 
+  // Guards against a race where two turns are sent back-to-back before the
+  // URL has re-rendered with the newly created conversation's id: without
+  // this, ensureConversation() would see conversationId still null on the
+  // second call and spin up a SECOND brand-new conversation, causing the
+  // companion to "forget" everything and re-greet mid-session.
   const pendingConversationId = useRef<Promise<number> | null>(null);
 
   const ensureConversation = async () => {
@@ -301,7 +300,38 @@ export default function CompanionPage() {
             />
           </div>
         ) : (
-          <LiveConversation onSendTurn={sendConversationTurn} companionName={companionName} />
+          <div className="flex flex-col items-center gap-3">
+            <LiveConversation onSendTurn={sendConversationTurn} companionName={companionName} keyword={keyword || undefined} />
+            <Dialog>
+              <DialogTrigger asChild>
+                <Button variant="ghost" size="sm" className="gap-1.5 text-xs text-muted-foreground hover:text-foreground">
+                  <Settings2 className="h-3.5 w-3.5" /> Voice Settings
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-[425px]">
+                <DialogHeader>
+                  <DialogTitle>Voice Activation</DialogTitle>
+                  <DialogDescription>
+                    Optionally set a keyword that must be spoken before the counselor will respond. Leave empty for normal conversation.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-4 py-4">
+                  <div className="grid grid-cols-4 items-center gap-4">
+                    <label htmlFor="keyword" className="col-span-4 text-sm font-medium">
+                      Activation Keyword
+                    </label>
+                    <Input
+                      id="keyword"
+                      value={keyword}
+                      onChange={(e) => setKeyword(e.target.value)}
+                      placeholder="e.g., Aura, Hey Counselor"
+                      className="col-span-4"
+                    />
+                  </div>
+                </div>
+              </DialogContent>
+            </Dialog>
+          </div>
         )}
       </div>
     </div>
