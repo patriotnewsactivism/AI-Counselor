@@ -6,13 +6,18 @@
  * shared implementation covers all of them (both non-streaming and
  * streaming variants).
  *
- * Priority order (fastest/most-generous free tiers first, paid last resort):
- *   1. Groq        - fast, generous per-model daily caps
- *   2. Cerebras    - equally fast, separate infra (no shared failure point with Groq)
- *   3. Mistral     - much larger raw token budget (~1B tokens/month), used after the two fastest
- *   4. Kilo Code   - separate free-tier account/quota, proxies the OpenRouter model catalog
- *   5. Qwen Cloud  - PAID pay-as-you-go (Alibaba Cloud Model Studio) -- only reached if every
- *                    free provider above is down/misconfigured
+ * Priority order (re-ranked 2026-07-26 by reasoning quality, not just size --
+ * Don wants the smartest free models that are still fast at the top):
+ *   1-2. Cerebras GLM-4.7 (355B) + gpt-oss-120b -- strongest free reasoners;
+ *        Cerebras infra runs both at 1000-3000 tok/s, so size costs no latency.
+ *   3. Groq gpt-oss-120b   - same weights as #2 on separate infra/quota (redundancy)
+ *   4. Groq Qwen3.6-27b    - smaller, but reasons well for its size and Groq is fast
+ *   5. Kilo Code           - auto-router, unpredictable underlying model
+ *   6. Groq Llama-3.3-70b  - general-purpose, not reasoning-tuned; retiring 2026-08-16
+ *   7. Cerebras Gemma-4-31b - general-purpose
+ *   8. Mistral             - general-purpose, largest raw free token budget
+ *   9. Qwen Cloud          - PAID pay-as-you-go, only reached if every free provider is down
+ */
  */
 
 type OAMessage = { role: "system" | "user" | "assistant"; content: string };
@@ -56,7 +61,7 @@ const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
  * until its shutdown date. The cutovers then need no code change.
  */
 const PROVIDERS: Provider[] = [
-  // 355B — largest model available on any of these free tiers.
+  // 355B — largest model available on any of these free tiers, strongest reasoner.
   {
     name: "cerebras-glm-4.7",
     baseUrl: CEREBRAS_URL,
@@ -82,6 +87,17 @@ const PROVIDERS: Provider[] = [
     model: "openai/gpt-oss-120b",
     supportsJsonMode: true,
   },
+  // ~27B, but Qwen's newer generation reasons well above its size class and
+  // Groq's infra is fast -- promoted here (2026-07-26) ahead of the
+  // non-reasoning-focused general models below, per Don's request to rank
+  // by reasoning quality rather than raw parameter count alone.
+  {
+    name: "groq-qwen3.6-27b",
+    baseUrl: GROQ_URL,
+    apiKeyEnv: "GROQ_API_KEY",
+    model: "qwen/qwen3.6-27b",
+    supportsJsonMode: true,
+  },
   // Kilo's auto-router. The previous pin, meta-llama/llama-3.3-70b-instruct:free,
   // now 404s with error_type "discontinued_free_model" -- Kilo ended that
   // model's free period and its own error names kilo-auto/free as the
@@ -96,7 +112,8 @@ const PROVIDERS: Provider[] = [
     model: "kilo-auto/free",
     supportsJsonMode: true,
   },
-  // 70B — Groq's outgoing flagship, still serving until 2026-08-16.
+  // 70B — Groq's outgoing flagship, still serving until 2026-08-16. General-purpose,
+  // not reasoning-tuned, so it sits behind the reasoning-focused models above.
   {
     name: "groq-llama-3.3-70b",
     baseUrl: GROQ_URL,
@@ -104,7 +121,7 @@ const PROVIDERS: Provider[] = [
     model: "llama-3.3-70b-versatile",
     supportsJsonMode: true,
   },
-  // 31B
+  // 31B, general-purpose.
   {
     name: "cerebras-gemma-4-31b",
     baseUrl: CEREBRAS_URL,
@@ -112,15 +129,7 @@ const PROVIDERS: Provider[] = [
     model: "gemma-4-31b",
     supportsJsonMode: false,
   },
-  // ~27B
-  {
-    name: "groq-qwen3.6-27b",
-    baseUrl: GROQ_URL,
-    apiKeyEnv: "GROQ_API_KEY",
-    model: "qwen/qwen3.6-27b",
-    supportsJsonMode: true,
-  },
-  // ~24B
+  // ~24B, general-purpose, largest raw free token budget as a last free rung.
   {
     name: "mistral",
     baseUrl: "https://api.mistral.ai/v1/chat/completions",
