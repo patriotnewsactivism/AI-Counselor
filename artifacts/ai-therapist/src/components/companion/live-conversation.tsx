@@ -65,6 +65,29 @@ function speechSupported(): boolean {
   );
 }
 
+const KEYWORD_MODE_STORAGE_KEY = "ai-therapist:keywordMode";
+const KEYWORD_WORD_STORAGE_KEY = "ai-therapist:keywordWord";
+const DEFAULT_KEYWORD = "over";
+
+/** Consecutive `service-not-allowed` errors tolerated before we conclude the
+ * browser's speech backend genuinely can't serve this session. */
+const MAX_SERVICE_ERRORS = 4;
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Returns `text` with a trailing keyword (plus any trailing punctuation)
+ *  stripped, or null if the keyword isn't there. Word-boundary + case
+ *  insensitive so "...that's it, Over." matches "over". */
+function stripTrailingKeyword(text: string, word: string): string | null {
+  const trimmedWord = word.trim();
+  if (!trimmedWord || !text.trim()) return null;
+  const pattern = new RegExp(`\\b${escapeRegExp(trimmedWord)}\\b[\\s.,!?]*$`, "i");
+  if (!pattern.test(text)) return null;
+  return text.replace(pattern, "").trim();
+}
+
 interface LiveConversationProps {
   /** Sends the user's turn to the companion and resolves with the reply text
    *  so it can be spoken aloud. Should throw on failure. */
@@ -80,6 +103,18 @@ export function LiveConversation({ onSendTurn, companionName }: LiveConversation
   const [textMode, setTextMode] = useState(false);
   const [text, setText] = useState("");
   const [supported] = useState<boolean>(() => speechSupported());
+  // "Wait for a keyword" mode: instead of submitting the turn as soon as the
+  // browser's own endpointing detects a pause (which cuts people off
+  // mid-thought when they pause to find words), keep listening across
+  // pauses until the user says a keyword like "over" to end their turn.
+  const [keywordMode, setKeywordMode] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(KEYWORD_MODE_STORAGE_KEY) === "1";
+  });
+  const [keywordWord, setKeywordWord] = useState<string>(() => {
+    if (typeof window === "undefined") return DEFAULT_KEYWORD;
+    return window.localStorage.getItem(KEYWORD_WORD_STORAGE_KEY) || DEFAULT_KEYWORD;
+  });
 
   const activeRef = useRef(false);
   const phaseRef = useRef<Phase>("idle");
@@ -87,11 +122,29 @@ export function LiveConversation({ onSendTurn, companionName }: LiveConversation
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const restartTimerRef = useRef<number | null>(null);
   const voicesRef = useRef<SpeechSynthesisVoice[]>([]);
+  const keywordModeRef = useRef(keywordMode);
+  const keywordWordRef = useRef(keywordWord);
+  // Final transcript text accumulated for the turn-in-progress, carried
+  // across recognition restarts (the browser can end a "continuous"
+  // session on its own after a while) until the keyword ends the turn.
+  const turnTextRef = useRef("");
+  const keywordTriggeredRef = useRef(false);
+  const serviceErrorCountRef = useRef(0);
 
   const updatePhase = (next: Phase) => {
     phaseRef.current = next;
     setPhase(next);
   };
+
+  useEffect(() => {
+    keywordModeRef.current = keywordMode;
+    window.localStorage.setItem(KEYWORD_MODE_STORAGE_KEY, keywordMode ? "1" : "0");
+  }, [keywordMode]);
+
+  useEffect(() => {
+    keywordWordRef.current = keywordWord;
+    window.localStorage.setItem(KEYWORD_WORD_STORAGE_KEY, keywordWord);
+  }, [keywordWord]);
 
   // Voices load asynchronously in most browsers; keep a fresh copy around.
   useEffect(() => {
@@ -128,6 +181,11 @@ export function LiveConversation({ onSendTurn, companionName }: LiveConversation
     }
   };
 
+  /** Backs off while the speech backend is refusing sessions, so a run of
+   * `service-not-allowed` errors doesn't become a tight restart loop. */
+  const restartDelay = (base: number) =>
+    serviceErrorCountRef.current > 0 ? 600 * serviceErrorCountRef.current : base;
+
   const scheduleRestart = (delay = 250) => {
     clearRestartTimer();
     restartTimerRef.current = window.setTimeout(() => {
@@ -141,8 +199,9 @@ export function LiveConversation({ onSendTurn, companionName }: LiveConversation
     const Ctor = getRecognitionCtor();
     if (!Ctor) return;
 
+    const useKeyword = keywordModeRef.current;
     const recognition = new Ctor();
-    recognition.continuous = false;
+    recognition.continuous = useKeyword;
     recognition.interimResults = true;
     recognition.lang = "en-US";
     recognition.maxAlternatives = 1;
@@ -150,6 +209,9 @@ export function LiveConversation({ onSendTurn, companionName }: LiveConversation
     let finalText = "";
 
     recognition.onstart = () => {
+      // A session that actually opened clears the strike count, so only a
+      // sustained run of refusals — not scattered ones — ends the session.
+      serviceErrorCountRef.current = 0;
       if (activeRef.current && !busyRef.current) updatePhase("listening");
     };
 
@@ -161,16 +223,55 @@ export function LiveConversation({ onSendTurn, companionName }: LiveConversation
         if (result?.isFinal) finalText += transcript;
         else interim += transcript;
       }
-      setPartial((interim || finalText).trim());
+
+      if (!useKeyword) {
+        setPartial((interim || finalText).trim());
+        return;
+      }
+
+      const combined = `${turnTextRef.current} ${finalText} ${interim}`.trim();
+      setPartial(combined);
+      const stripped = stripTrailingKeyword(combined, keywordWordRef.current);
+      if (stripped !== null && !keywordTriggeredRef.current) {
+        keywordTriggeredRef.current = true;
+        turnTextRef.current = "";
+        setPartial("");
+        try {
+          recognition.onend = null;
+          recognition.abort();
+        } catch {
+          /* already stopped */
+        }
+        recognitionRef.current = null;
+        void handleUtterance(stripped);
+      }
     };
 
     recognition.onerror = (event) => {
       const errorKind = event.error;
-      if (errorKind === "not-allowed" || errorKind === "service-not-allowed") {
+      if (errorKind === "not-allowed") {
+        // A genuine permission denial — retrying can't help, so end cleanly.
         setError(
           "Microphone access is blocked. Enable the mic permission for this site in your browser, then tap Start again.",
         );
         stop();
+        return;
+      }
+      if (errorKind === "service-not-allowed") {
+        // NOT the same as a permission denial: the browser's speech backend
+        // intermittently refuses a session (common on mobile Safari and on
+        // Chromium builds without Google's speech service). This used to call
+        // stop(), which ended the whole session the instant it happened —
+        // the "mic turns itself on then straight back off" behaviour. Ride
+        // out a few of these before giving up, and let onend restart us.
+        serviceErrorCountRef.current += 1;
+        if (serviceErrorCountRef.current >= MAX_SERVICE_ERRORS) {
+          setError(
+            "This browser's speech service keeps refusing the microphone. Try Chrome on desktop or Android, or use the keyboard below.",
+          );
+          stop();
+        }
+        return;
       }
       // "no-speech", "aborted", "network", etc. fall through to onend, which
       // decides whether to loop the mic again.
@@ -181,10 +282,25 @@ export function LiveConversation({ onSendTurn, companionName }: LiveConversation
       const said = finalText.trim();
       setPartial("");
       if (!activeRef.current) return;
+
+      if (useKeyword) {
+        // The browser can end a "continuous" session on its own (time
+        // limits, brief network hiccups) well before the keyword is heard.
+        // Fold what was captured into the running turn and keep listening
+        // instead of treating this pause as the end of the turn.
+        if (keywordTriggeredRef.current) {
+          keywordTriggeredRef.current = false;
+          return;
+        }
+        if (said) turnTextRef.current = `${turnTextRef.current} ${said}`.trim();
+        if (!busyRef.current) scheduleRestart(restartDelay(150));
+        return;
+      }
+
       if (said) {
         void handleUtterance(said);
       } else if (!busyRef.current) {
-        scheduleRestart(300);
+        scheduleRestart(restartDelay(300));
       }
     };
 
@@ -261,6 +377,9 @@ export function LiveConversation({ onSendTurn, companionName }: LiveConversation
     setError(null);
     activeRef.current = true;
     busyRef.current = false;
+    turnTextRef.current = "";
+    keywordTriggeredRef.current = false;
+    serviceErrorCountRef.current = 0;
     setActive(true);
     updatePhase("listening");
     // Priming a (silent) utterance inside the tap keeps mobile browsers from
@@ -276,6 +395,8 @@ export function LiveConversation({ onSendTurn, companionName }: LiveConversation
   const stop = () => {
     activeRef.current = false;
     busyRef.current = false;
+    turnTextRef.current = "";
+    keywordTriggeredRef.current = false;
     clearRestartTimer();
     const recognition = recognitionRef.current;
     recognitionRef.current = null;
@@ -307,6 +428,8 @@ export function LiveConversation({ onSendTurn, companionName }: LiveConversation
       /* ignore */
     }
     busyRef.current = false;
+    turnTextRef.current = "";
+    keywordTriggeredRef.current = false;
     updatePhase("listening");
     scheduleRestart(120);
   };
@@ -360,7 +483,10 @@ export function LiveConversation({ onSendTurn, companionName }: LiveConversation
   const statusLine = (() => {
     switch (phase) {
       case "listening":
-        return partial ? partial : "Listening… speak naturally.";
+        if (partial) return partial;
+        return keywordMode
+          ? `Listening… say "${keywordWord.trim() || DEFAULT_KEYWORD}" when you're done.`
+          : "Listening… speak naturally.";
       case "thinking":
         return `${companionName} is thinking…`;
       case "speaking":
@@ -446,6 +572,35 @@ export function LiveConversation({ onSendTurn, companionName }: LiveConversation
           )}
         </div>
       </div>
+
+      {!active && (
+        <div className="w-full max-w-md rounded-2xl border border-border/70 bg-card/70 px-4 py-3 shadow-sm flex flex-col gap-2">
+          <label className="flex items-center justify-between gap-3 text-sm text-foreground cursor-pointer select-none">
+            <span>
+              Wait for a keyword before responding
+              <span className="block text-xs text-muted-foreground font-normal mt-0.5">
+                Keeps listening through pauses — say the keyword when you're done talking.
+              </span>
+            </span>
+            <input
+              type="checkbox"
+              className="accent-primary h-4 w-4 shrink-0"
+              checked={keywordMode}
+              onChange={(event) => setKeywordMode(event.target.checked)}
+            />
+          </label>
+          {keywordMode && (
+            <input
+              type="text"
+              value={keywordWord}
+              onChange={(event) => setKeywordWord(event.target.value)}
+              placeholder={DEFAULT_KEYWORD}
+              maxLength={24}
+              className="h-9 rounded-lg border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+            />
+          )}
+        </div>
+      )}
 
       <div className="relative">
         {active && phase !== "thinking" && (

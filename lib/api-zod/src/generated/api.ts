@@ -24,6 +24,7 @@ export const GetProfileResponse = zod.object({
   "userId": zod.string(),
   "preferredName": zod.string().nullish(),
   "companionName": zod.string(),
+  "historyPinEnabled": zod.boolean().describe('True if a History PIN is configured, gating access to past conversations'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -44,6 +45,7 @@ export const UpdateProfileResponse = zod.object({
   "userId": zod.string(),
   "preferredName": zod.string().nullish(),
   "companionName": zod.string(),
+  "historyPinEnabled": zod.boolean().describe('True if a History PIN is configured, gating access to past conversations'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -253,6 +255,47 @@ export const EnrollVoiceProfileResponse = zod.object({
   "name": zod.string(),
   "lastHeardAt": zod.coerce.date().nullish(),
   "createdAt": zod.coerce.date()
+})
+
+
+/**
+ * If a PIN is already set, currentPin must be supplied and correct. On success, immediately unlocks history for the caller (same as unlockHistory) so the PIN doesn't have to be re-entered right after setting it.
+ * @summary Set or change the History PIN that gates access to past conversations
+ */
+export const setHistoryPinBodyPinRegExp = new RegExp('^[0-9]{4,8}$');
+
+
+export const SetHistoryPinBody = zod.object({
+  "pin": zod.string().regex(setHistoryPinBodyPinRegExp).describe('New 4-8 digit numeric PIN'),
+  "currentPin": zod.string().optional().describe('Required (and must be correct) when a PIN is already set')
+})
+
+export const SetHistoryPinResponse = zod.object({
+  "token": zod.string().describe('Opaque signed token — send as the X-History-Token header'),
+  "expiresAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Remove the History PIN, returning history to unprotected
+ */
+export const RemoveHistoryPinBody = zod.object({
+  "currentPin": zod.string()
+})
+
+export const RemoveHistoryPinResponse = zod.void()
+
+
+/**
+ * @summary Verify the History PIN and obtain a short-lived unlock token
+ */
+export const UnlockHistoryBody = zod.object({
+  "pin": zod.string()
+})
+
+export const UnlockHistoryResponse = zod.object({
+  "token": zod.string().describe('Opaque signed token — send as the X-History-Token header'),
+  "expiresAt": zod.coerce.date()
 })
 
 

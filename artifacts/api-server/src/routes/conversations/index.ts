@@ -10,12 +10,17 @@ import {
   DeleteConversationParams,
 } from "@workspace/api-zod";
 import { requireAuth, type AuthedRequest } from "../../middlewares/requireAuth";
+import { requireHistoryUnlock } from "../../middlewares/requireHistoryUnlock";
 import messagesRouter from "./messages";
 import voiceMessagesRouter from "./voiceMessages";
 
 const router: IRouter = Router();
 
-router.get("/conversations", requireAuth, async (req, res): Promise<void> => {
+// The list is the browsing surface that reveals what past conversations
+// exist — gated behind the History PIN when the user has one configured.
+// Opening a specific conversation by id (below) stays ungated so an
+// active/just-created chat keeps working without re-entering the PIN.
+router.get("/conversations", requireAuth, requireHistoryUnlock, async (req, res): Promise<void> => {
   const userId = (req as AuthedRequest).userId;
   const conversations = await db
     .select()

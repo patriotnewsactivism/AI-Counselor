@@ -23,6 +23,10 @@ import type {
   Conversation,
   ConversationInput,
   HealthStatus,
+  HistoryPinInput,
+  HistoryPinRemovalInput,
+  HistoryTokenResponse,
+  HistoryUnlockInput,
   Memory,
   Message,
   MessageExchange,
@@ -1179,6 +1183,220 @@ export const useEnrollVoiceProfile = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getEnrollVoiceProfileMutationOptions(options));
+    }
+
+export const getSetHistoryPinUrl = () => {
+
+
+
+
+  return `/api/history/pin`
+}
+
+/**
+ * If a PIN is already set, currentPin must be supplied and correct. On success, immediately unlocks history for the caller (same as unlockHistory) so the PIN doesn't have to be re-entered right after setting it.
+ * @summary Set or change the History PIN that gates access to past conversations
+ */
+export const setHistoryPin = async (historyPinInput: HistoryPinInput, options?: RequestInit): Promise<HistoryTokenResponse> => {
+
+  return customFetch<HistoryTokenResponse>(getSetHistoryPinUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(historyPinInput)
+  }
+);}
+
+
+
+
+
+export const getSetHistoryPinMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setHistoryPin>>, TError,{data: BodyType<HistoryPinInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setHistoryPin>>, TError,{data: BodyType<HistoryPinInput>}, TContext> => {
+
+const mutationKey = ['setHistoryPin'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setHistoryPin>>, {data: BodyType<HistoryPinInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  setHistoryPin(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetHistoryPinMutationResult = NonNullable<Awaited<ReturnType<typeof setHistoryPin>>>
+    export type SetHistoryPinMutationBody = BodyType<HistoryPinInput>
+    export type SetHistoryPinMutationError = ErrorType<void>
+
+    /**
+ * @summary Set or change the History PIN that gates access to past conversations
+ */
+export const useSetHistoryPin = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setHistoryPin>>, TError,{data: BodyType<HistoryPinInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof setHistoryPin>>,
+        TError,
+        {data: BodyType<HistoryPinInput>},
+        TContext
+      > => {
+      return useMutation(getSetHistoryPinMutationOptions(options));
+    }
+
+export const getRemoveHistoryPinUrl = () => {
+
+
+
+
+  return `/api/history/pin`
+}
+
+/**
+ * @summary Remove the History PIN, returning history to unprotected
+ */
+export const removeHistoryPin = async (historyPinRemovalInput: HistoryPinRemovalInput, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getRemoveHistoryPinUrl(),
+  {
+    ...options,
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(historyPinRemovalInput)
+  }
+);}
+
+
+
+
+
+export const getRemoveHistoryPinMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof removeHistoryPin>>, TError,{data: BodyType<HistoryPinRemovalInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof removeHistoryPin>>, TError,{data: BodyType<HistoryPinRemovalInput>}, TContext> => {
+
+const mutationKey = ['removeHistoryPin'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof removeHistoryPin>>, {data: BodyType<HistoryPinRemovalInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  removeHistoryPin(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RemoveHistoryPinMutationResult = NonNullable<Awaited<ReturnType<typeof removeHistoryPin>>>
+    export type RemoveHistoryPinMutationBody = BodyType<HistoryPinRemovalInput>
+    export type RemoveHistoryPinMutationError = ErrorType<void>
+
+    /**
+ * @summary Remove the History PIN, returning history to unprotected
+ */
+export const useRemoveHistoryPin = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof removeHistoryPin>>, TError,{data: BodyType<HistoryPinRemovalInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof removeHistoryPin>>,
+        TError,
+        {data: BodyType<HistoryPinRemovalInput>},
+        TContext
+      > => {
+      return useMutation(getRemoveHistoryPinMutationOptions(options));
+    }
+
+export const getUnlockHistoryUrl = () => {
+
+
+
+
+  return `/api/history/unlock`
+}
+
+/**
+ * @summary Verify the History PIN and obtain a short-lived unlock token
+ */
+export const unlockHistory = async (historyUnlockInput: HistoryUnlockInput, options?: RequestInit): Promise<HistoryTokenResponse> => {
+
+  return customFetch<HistoryTokenResponse>(getUnlockHistoryUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(historyUnlockInput)
+  }
+);}
+
+
+
+
+
+export const getUnlockHistoryMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof unlockHistory>>, TError,{data: BodyType<HistoryUnlockInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof unlockHistory>>, TError,{data: BodyType<HistoryUnlockInput>}, TContext> => {
+
+const mutationKey = ['unlockHistory'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof unlockHistory>>, {data: BodyType<HistoryUnlockInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  unlockHistory(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UnlockHistoryMutationResult = NonNullable<Awaited<ReturnType<typeof unlockHistory>>>
+    export type UnlockHistoryMutationBody = BodyType<HistoryUnlockInput>
+    export type UnlockHistoryMutationError = ErrorType<void>
+
+    /**
+ * @summary Verify the History PIN and obtain a short-lived unlock token
+ */
+export const useUnlockHistory = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof unlockHistory>>, TError,{data: BodyType<HistoryUnlockInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof unlockHistory>>,
+        TError,
+        {data: BodyType<HistoryUnlockInput>},
+        TContext
+      > => {
+      return useMutation(getUnlockHistoryMutationOptions(options));
     }
 
 export const getUpdateVoiceProfileUrl = (id: number,) => {

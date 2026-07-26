@@ -9,7 +9,7 @@ const router: IRouter = Router();
 
 router.get("/profile", requireAuth, async (req, res): Promise<void> => {
   const profile = await getOrCreateProfile((req as AuthedRequest).userId);
-  res.json(GetProfileResponse.parse(profile));
+  res.json(GetProfileResponse.parse({ ...profile, historyPinEnabled: Boolean(profile.historyPinHash) }));
 });
 
 router.patch("/profile", requireAuth, async (req, res): Promise<void> => {
@@ -28,7 +28,7 @@ router.patch("/profile", requireAuth, async (req, res): Promise<void> => {
     .where(eq(profilesTable.userId, userId))
     .returning();
 
-  res.json(UpdateProfileResponse.parse(updated));
+  res.json(UpdateProfileResponse.parse({ ...updated, historyPinEnabled: Boolean(updated.historyPinHash) }));
 });
 
 export default router;

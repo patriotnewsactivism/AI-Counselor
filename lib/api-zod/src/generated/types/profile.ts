@@ -11,6 +11,8 @@ export interface Profile {
   /** @nullable */
   preferredName?: string | null;
   companionName: string;
+  /** True if a History PIN is configured, gating access to past conversations */
+  historyPinEnabled: boolean;
   createdAt: Date;
   updatedAt: Date;
 }

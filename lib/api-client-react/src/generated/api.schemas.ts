@@ -14,6 +14,8 @@ export interface Profile {
   /** @nullable */
   preferredName?: string | null;
   companionName: string;
+  /** True if a History PIN is configured, gating access to past conversations */
+  historyPinEnabled: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -121,5 +123,29 @@ export interface VoiceProfileInput {
 export interface VoiceProfileUpdate {
   /** @minLength 1 */
   name: string;
+}
+
+export interface HistoryPinInput {
+  /**
+     * New 4-8 digit numeric PIN
+     * @pattern ^[0-9]{4,8}$
+     */
+  pin: string;
+  /** Required (and must be correct) when a PIN is already set */
+  currentPin?: string;
+}
+
+export interface HistoryPinRemovalInput {
+  currentPin: string;
+}
+
+export interface HistoryUnlockInput {
+  pin: string;
+}
+
+export interface HistoryTokenResponse {
+  /** Opaque signed token — send as the X-History-Token header */
+  token: string;
+  expiresAt: string;
 }
 

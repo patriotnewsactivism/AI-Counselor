@@ -1,20 +1,17 @@
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
-import { 
-  Heart, 
-  MessageCircle, 
-  BookHeart, 
-  Settings, 
+import {
+  Heart,
+  History,
+  BookHeart,
+  Settings,
   Menu,
   PlusCircle,
-  LogOut,
-  ChevronRight
+  LogOut
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { useClerk } from "@clerk/react";
-import { useListConversations } from "@workspace/api-client-react";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
@@ -64,8 +61,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 function SidebarContent() {
   const { signOut } = useClerk();
   const [location, setLocation] = useLocation();
-  const { data: conversations = [], isLoading } = useListConversations();
-  
+
   const handleLogout = () => {
     signOut({ redirectUrl: "/" });
   };
@@ -81,50 +77,35 @@ function SidebarContent() {
         </Link>
       </div>
 
-      <div className="px-4 pb-4">
-        <Button 
+      <div className="px-4 pb-4 flex flex-col gap-2">
+        <Button
           className="w-full justify-start gap-2 bg-sidebar-primary text-sidebar-primary-foreground hover:opacity-90 rounded-full"
           onClick={() => setLocation('/companion')}
         >
           <PlusCircle className="h-4 w-4" />
           New Conversation
         </Button>
+        {/* Past conversations live behind /history, which is gated by a
+            History PIN once the user sets one up — no title/preview list
+            shown here, unlike the old always-visible "Recent" list. */}
+        <Link href="/history" className={cn(
+          "w-full flex items-center gap-2 px-3 py-2 rounded-full text-sm font-medium transition-colors border",
+          location === '/history'
+            ? "bg-sidebar-accent text-sidebar-accent-foreground border-sidebar-accent"
+            : "border-sidebar-border text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
+        )}>
+          <History className="h-4 w-4" />
+          History
+        </Link>
       </div>
 
-      <ScrollArea className="flex-1 px-4">
-        <div className="flex flex-col gap-1 py-2">
-          <div className="text-xs font-medium text-sidebar-foreground/50 px-2 py-1 mb-1 uppercase tracking-wider">
-            Recent
-          </div>
-          
-          {isLoading ? (
-            <div className="px-2 py-3 text-sm text-sidebar-foreground/50">Loading...</div>
-          ) : conversations.length === 0 ? (
-            <div className="px-2 py-3 text-sm text-sidebar-foreground/50 italic">No recent conversations</div>
-          ) : (
-            conversations.map(conv => {
-              const isActive = location === `/companion/${conv.id}`;
-              return (
-                <Link key={conv.id} href={`/companion/${conv.id}`} className={cn(
-                  "w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm transition-colors text-left",
-                  isActive 
-                    ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium" 
-                    : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
-                )}>
-                  <span className="truncate">{conv.title || "A quiet moment"}</span>
-                  {isActive && <ChevronRight className="h-3.5 w-3.5 opacity-50 shrink-0" />}
-                </Link>
-              );
-            })
-          )}
-        </div>
-      </ScrollArea>
+      <div className="flex-1" />
 
       <div className="p-4 border-t border-sidebar-border flex flex-col gap-1">
         <Link href="/memories" className={cn(
           "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-colors text-left",
-          location === '/memories' 
-            ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium" 
+          location === '/memories'
+            ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
             : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
         )}>
           <BookHeart className="h-4 w-4" />
