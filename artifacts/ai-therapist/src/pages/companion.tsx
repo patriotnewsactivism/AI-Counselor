@@ -79,17 +79,32 @@ export default function CompanionPage() {
     window.localStorage.setItem(GROK_BETA_KEY, useGrokBeta ? "1" : "0");
   }, [useGrokBeta]);
 
+  // Guards against a race where two turns are sent back-to-back before the
+  // URL has re-rendered with the newly created conversation's id: without
+  // this, ensureConversation() would see conversationId still null on the
+  // second call and spin up a SECOND brand-new conversation, causing the
+  // companion to "forget" everything and re-greet mid-session.
+  const pendingConversationId = useRef<Promise<number> | null>(null);
+
   const ensureConversation = async () => {
-    let targetId = conversationId;
-    if (!targetId) {
+    if (conversationId) return conversationId;
+    if (pendingConversationId.current) return pendingConversationId.current;
+
+    const creation = (async () => {
       const newConv = await createConv.mutateAsync({ data: { title: "New Conversation" } });
-      targetId = newConv.id;
       queryClient.invalidateQueries({ queryKey: getListConversationsQueryKey() });
       // Thanks to the single /companion/:id? route, this navigation updates the
       // URL WITHOUT remounting the page — the live session keeps running.
-      setLocation(`/companion/${targetId}`);
+      setLocation(`/companion/${newConv.id}`);
+      return newConv.id;
+    })();
+
+    pendingConversationId.current = creation;
+    try {
+      return await creation;
+    } finally {
+      pendingConversationId.current = null;
     }
-    return targetId;
   };
 
   /** Sends one conversational turn and returns the companion's reply text so
