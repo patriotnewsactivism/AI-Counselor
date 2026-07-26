@@ -79,19 +79,41 @@ export default function CompanionPage() {
     window.localStorage.setItem(GROK_BETA_KEY, useGrokBeta ? "1" : "0");
   }, [useGrokBeta]);
 
-  // Guards against a race where two turns are sent back-to-back before the
-  // URL has re-rendered with the newly created conversation's id: without
-  // this, ensureConversation() would see conversationId still null on the
-  // second call and spin up a SECOND brand-new conversation, causing the
-  // companion to "forget" everything and re-greet mid-session.
+  // ensureConversation/sendConversationTurn must NEVER be read through a
+  // plain closed-over `conversationId`. LiveConversation's live-voice loop
+  // is not driven by React re-renders at all -- it's a self-perpetuating
+  // chain of SpeechRecognition callbacks (onend -> scheduleRestart ->
+  // startRecognition -> new onresult/onend) all rooted in whichever render
+  // was active the moment the mic button was tapped. If that tap happened
+  // on a brand-new conversation (conversationId still null), EVERY turn for
+  // the rest of that live session would see that same frozen null forever,
+  // since nothing in the callback chain ever re-derives a fresh closure
+  // from a later render -- so every single turn created its own new
+  // conversation, silently discarding all prior context each time. A ref is
+  // a stable object whose `.current` is always the latest value no matter
+  // how stale the closure reading it is, which is exactly what's needed
+  // here. (The Grok/WS voice path sidesteps this differently, by resolving
+  // the id once and passing it as a direct start() argument instead of a
+  // prop -- see startGrokStream below. Same underlying hazard, different
+  // fix shape because that path is one persistent connection per call
+  // rather than one REST round-trip per turn.)
+  const conversationIdRef = useRef<number | null>(conversationId);
+  useEffect(() => {
+    conversationIdRef.current = conversationId;
+  }, [conversationId]);
+
   const pendingConversationId = useRef<Promise<number> | null>(null);
 
   const ensureConversation = async () => {
-    if (conversationId) return conversationId;
+    if (conversationIdRef.current) return conversationIdRef.current;
     if (pendingConversationId.current) return pendingConversationId.current;
 
     const creation = (async () => {
       const newConv = await createConv.mutateAsync({ data: { title: "New Conversation" } });
+      // Set synchronously, before the URL/route-param round-trip lands, so
+      // any turn that lands between now and the next render still resolves
+      // to this conversation instead of creating another one.
+      conversationIdRef.current = newConv.id;
       queryClient.invalidateQueries({ queryKey: getListConversationsQueryKey() });
       // Thanks to the single /companion/:id? route, this navigation updates the
       // URL WITHOUT remounting the page — the live session keeps running.
