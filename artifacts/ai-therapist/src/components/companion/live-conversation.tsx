@@ -12,8 +12,8 @@ import { cn } from "@/lib/utils";
  * - THINKING: Sent to AI, waiting for response
  * - SPEAKING: Playing AI response
  * 
- * No keyword mode, no restart timers, no continuous recognition loops.
- * Just press to talk, speak naturally, wait for response, repeat.
+ * Optional keyword activation: If a keyword is set, the counselor will only
+ * respond when that keyword is spoken. Otherwise works like a normal phone call.
  */
 
 type Phase = "idle" | "listening" | "thinking" | "speaking";
@@ -66,20 +66,23 @@ function speechSupported(): boolean {
 interface LiveConversationProps {
   onSendTurn: (text: string) => Promise<string>;
   companionName: string;
+  keyword?: string; // Optional keyword that must be said to trigger response
 }
 
-export function LiveConversation({ onSendTurn, companionName }: LiveConversationProps) {
+export function LiveConversation({ onSendTurn, companionName, keyword }: LiveConversationProps) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [error, setError] = useState<string | null>(null);
   const [partial, setPartial] = useState("");
   const [textMode, setTextMode] = useState(false);
   const [text, setText] = useState("");
   const [supported] = useState<boolean>(() => speechSupported());
+  const [keywordDetected, setKeywordDetected] = useState(false); // Track if keyword was said in current turn
 
   const phaseRef = useRef<Phase>("idle");
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const voicesRef = useRef<SpeechSynthesisVoice[]>([]);
   const isListeningRef = useRef(false);
+  const keywordRef = useRef(false); // Track keyword detection within current utterance
 
   const updatePhase = (next: Phase) => {
     phaseRef.current = next;
@@ -180,6 +183,7 @@ export function LiveConversation({ onSendTurn, companionName }: LiveConversation
 
     recognition.onstart = () => {
       isListeningRef.current = true;
+      keywordRef.current = false; // Reset keyword detection for new utterance
       if (phaseRef.current === "idle" || phaseRef.current === "listening") {
         updatePhase("listening");
       }
@@ -199,6 +203,12 @@ export function LiveConversation({ onSendTurn, companionName }: LiveConversation
 
       const combined = `${finalText} ${interim}`.trim();
       setPartial(combined);
+      
+      // Check for keyword if one is set
+      if (keyword && combined.toLowerCase().includes(keyword.toLowerCase())) {
+        keywordRef.current = true;
+        setKeywordDetected(true);
+      }
     };
 
     recognition.onerror = (event) => {
@@ -225,9 +235,16 @@ export function LiveConversation({ onSendTurn, companionName }: LiveConversation
       
       const said = finalText.trim();
       setPartial("");
+      setKeywordDetected(false); // Reset visual indicator
       
       // Only process if we have speech and we're still in a listening state
       if (said && (phaseRef.current === "listening" || phaseRef.current === "idle")) {
+        // If keyword is set and not empty, only respond if keyword was detected
+        if (keyword && keyword.trim() && !keywordRef.current) {
+          // Keyword not detected, stay listening without sending to AI
+          updatePhase("listening");
+          return;
+        }
         void handleUtterance(said);
       } else if (phaseRef.current === "listening") {
         // No speech detected, stay in listening mode
@@ -343,6 +360,7 @@ export function LiveConversation({ onSendTurn, companionName }: LiveConversation
     switch (phase) {
       case "listening":
         if (partial) return partial;
+        if (keyword && keyword.trim()) return keywordDetected ? `Keyword "${keyword}" detected - speak now.` : `Listening... say "${keyword}" to talk to ${companionName}.`;
         return "Listening… speak naturally.";
       case "thinking":
         return `${companionName} is thinking…`;
