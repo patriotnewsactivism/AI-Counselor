@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { desc, eq } from "drizzle-orm";
+import { asc, desc, eq } from "drizzle-orm";
 import { db, memoriesTable, profilesTable } from "@workspace/db";
 
 /**
@@ -30,6 +30,7 @@ import { db, memoriesTable, profilesTable } from "@workspace/db";
 const router: IRouter = Router();
 
 const MCP_BRIDGE_SECRET = process.env.MCP_BRIDGE_SECRET;
+const DEFAULT_PROTOCOL_VERSION = "2025-06-18";
 
 type JsonRpcRequest = {
   jsonrpc: "2.0";
@@ -74,7 +75,12 @@ const TOOLS = [
 ];
 
 async function getFirstProfile() {
-  const [profile] = await db.select().from(profilesTable).limit(1);
+  // `.limit(1)` with no ORDER BY is nondeterministic -- Postgres is free to
+  // return rows in whatever order it finds convenient, which can change
+  // between queries. Ordering by createdAt makes "first" mean something
+  // concrete (the oldest account, i.e. the one made when Don first set the
+  // app up) instead of "whichever row Postgres felt like returning."
+  const [profile] = await db.select().from(profilesTable).orderBy(asc(profilesTable.createdAt)).limit(1);
   return profile;
 }
 
@@ -112,6 +118,24 @@ async function handleToolCall(name: string, args: Record<string, unknown> | unde
   return { content: [{ type: "text", text: `Unknown tool: ${name}` }], isError: true };
 }
 
+// The Streamable HTTP spec lets clients open a standalone GET/SSE stream for
+// server-initiated messages, and lets them DELETE to end a session -- both
+// optional, and this server (stateless, no server-initiated messages) does
+// neither. A spec-compliant client is supposed to treat "no support" as a
+// clean 405, not an error -- but Express's *default* handler for an
+// undeclared method on an undeclared route is a bare 404 HTML page, which
+// reads as "nothing is here" rather than "this exists, that method isn't
+// supported." Some MCP clients do an initial reachability probe before ever
+// sending POST /initialize, and a 404 there can surface to the user as
+// "Couldn't reach this MCP server" even though POST works perfectly fine.
+router.get("/mcp/bridge", (_req, res): void => {
+  res.status(405).json(rpcError(null, -32000, "This MCP server does not support server-initiated SSE streams (GET) -- use POST."));
+});
+
+router.delete("/mcp/bridge", (_req, res): void => {
+  res.status(405).json(rpcError(null, -32000, "This MCP server is stateless and has no sessions to terminate (DELETE)."));
+});
+
 router.post("/mcp/bridge", async (req, res): Promise<void> => {
   if (!MCP_BRIDGE_SECRET) {
     res.status(500).json(rpcError(null, -32000, "MCP_BRIDGE_SECRET not configured on server"));
@@ -130,9 +154,17 @@ router.post("/mcp/bridge", async (req, res): Promise<void> => {
 
   try {
     if (method === "initialize") {
+      // Echo back whatever protocolVersion the client asked for rather than
+      // pinning one: this server has no version-specific behavior, so any
+      // requested date-string is fine, and pinning one (the previous value,
+      // "2024-11-05", predates the Streamable HTTP transport this route
+      // actually implements -- introduced in 2025-03-26) only risks a strict
+      // client rejecting the mismatch. DEFAULT_PROTOCOL_VERSION covers
+      // clients that omit the field on initialize.
+      const requestedVersion = params?.protocolVersion;
       res.json(
         rpcResult(id, {
-          protocolVersion: "2024-11-05",
+          protocolVersion: typeof requestedVersion === "string" ? requestedVersion : DEFAULT_PROTOCOL_VERSION,
           capabilities: { tools: {} },
           serverInfo: { name: "ai-counselor-memory-bridge", version: "1.0.0" },
         }),
