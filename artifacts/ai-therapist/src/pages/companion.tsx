@@ -104,11 +104,15 @@ export default function CompanionPage() {
   const pendingConversationId = useRef<Promise<number> | null>(null);
 
   const ensureConversation = async () => {
-    if (conversationId) return conversationId;
+    if (conversationIdRef.current) return conversationIdRef.current;
     if (pendingConversationId.current) return pendingConversationId.current;
 
     const creation = (async () => {
       const newConv = await createConv.mutateAsync({ data: { title: "New Conversation" } });
+      // Set synchronously, before the URL/route-param round-trip lands, so
+      // any turn that lands between now and the next render still resolves
+      // to this conversation instead of creating another one.
+      conversationIdRef.current = newConv.id;
       queryClient.invalidateQueries({ queryKey: getListConversationsQueryKey() });
       // Thanks to the single /companion/:id? route, this navigation updates the
       // URL WITHOUT remounting the page — the live session keeps running.
