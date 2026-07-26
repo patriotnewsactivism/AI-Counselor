@@ -64,7 +64,14 @@ export async function generateCompanionReply(params: {
     { role: "user" as const, content: params.userMessage },
   ];
 
-  return generateContent({ systemInstruction, messages, maxTokens: 8192 });
+  // Capped at 2048 (was 8192): a companion reply this large alone eats
+  // almost all of Groq's free-tier 8000 TPM budget once the system prompt +
+  // history are added, so groq-gpt-oss-120b and groq-qwen3.6-27b were
+  // failing with HTTP 413 on essentially every single reply, not
+  // occasionally -- confirmed in production logs 2026-07-26. 2048 is still
+  // generous for a conversational turn and lets those two rungs actually
+  // serve as real fallback capacity instead of guaranteed-fail dead weight.
+  return generateContent({ systemInstruction, messages, maxTokens: 2048 });
 }
 
 /**
@@ -95,7 +102,8 @@ export async function generateCompanionReplyPipelined(
     { role: "user" as const, content: params.userMessage },
   ];
 
-  return generateContentStream({ systemInstruction, messages, maxTokens: 8192 }, onSentence);
+  // Same 2048 cap as generateCompanionReply above, and for the same reason.
+  return generateContentStream({ systemInstruction, messages, maxTokens: 2048 }, onSentence);
 }
 
 export async function extractMemories(params: {
