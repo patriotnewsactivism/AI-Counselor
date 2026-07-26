@@ -1,5 +1,11 @@
+import { randomUUID } from "node:crypto";
 import { db, profilesTable, type Profile } from "@workspace/db";
-import { verifyPin, createLockoutTracker } from "./pinCrypto";
+import { hashPin, verifyPin, createLockoutTracker } from "./pinCrypto";
+
+/** Phone access codes are exactly 6 digits -- enforced here so an unclaimed
+ * code doesn't silently self-register an account for arbitrary garbage
+ * (a mis-transcribed word, an empty string, etc). */
+export const PHONE_ACCESS_CODE_PATTERN = /^[0-9]{6}$/;
 
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_MS = 15 * 60 * 1000;
@@ -38,4 +44,30 @@ export async function getProfileByAccessCode(code: string): Promise<Profile | un
     }
   }
   return undefined;
+}
+
+/**
+ * Self-service phone-only account creation: called when a caller gives a
+ * code that doesn't match anything (mcpBridge.ts's verify_caller). There is
+ * no Clerk account behind this profile -- userId is a synthetic
+ * `phone_<uuid>`, deliberately shaped so it can never collide with (or be
+ * confused for) a real Clerk user id, since this profile is unreachable from
+ * the web app (every /api/* route except the MCP bridge and healthz
+ * requires a real Clerk session). It's reachable only by calling back in
+ * with the same code.
+ *
+ * Known race: two callers picking the identical unclaimed code at the same
+ * instant could both pass the "not found" check before either insert lands,
+ * creating two profiles for one plaintext code (harmless but confusing --
+ * whichever row getProfileByAccessCode happens to scan first "wins" future
+ * lookups). Not worth a locking scheme for a personal phone line's traffic;
+ * revisit if this app ever fields concurrent first-time callers at scale.
+ */
+export async function createProfileForAccessCode(code: string): Promise<Profile> {
+  const userId = `phone_${randomUUID()}`;
+  const [profile] = await db
+    .insert(profilesTable)
+    .values({ userId, phoneAccessCodeHash: hashPin(code) })
+    .returning();
+  return profile;
 }

@@ -1,7 +1,14 @@
 import { Router, type IRouter } from "express";
 import { desc, eq } from "drizzle-orm";
-import { db, memoriesTable, conversationsTable, messagesTable } from "@workspace/db";
-import { getProfileByAccessCode, isPhoneBridgeLockedOut, recordFailedPhoneBridgeAttempt, clearFailedPhoneBridgeAttempts } from "../lib/phoneAccess";
+import { db, memoriesTable, profilesTable, conversationsTable, messagesTable } from "@workspace/db";
+import {
+  getProfileByAccessCode,
+  createProfileForAccessCode,
+  PHONE_ACCESS_CODE_PATTERN,
+  isPhoneBridgeLockedOut,
+  recordFailedPhoneBridgeAttempt,
+  clearFailedPhoneBridgeAttempts,
+} from "../lib/phoneAccess";
 import { findOwnedConversation } from "./conversations/shared";
 
 /**
@@ -21,16 +28,27 @@ import { findOwnedConversation } from "./conversations/shared";
  * 1. A static shared secret (MCP_BRIDGE_SECRET env var), checked via
  *    `Authorization: Bearer <secret>` -- proves the caller is x.ai's
  *    connector, not Clerk (a phone call has no Clerk session).
- * 2. A per-account 6-digit phone access code (profiles.phoneAccessCodeHash,
- *    set in Settings -> Phone Access Code), passed as `access_code` on every
- *    tool call and looked up via getProfileByAccessCode. This is the actual
- *    "which account is this call for" identity -- the bridge secret alone
- *    only proves "this is x.ai calling," not which caller's account to use.
- *    Stateless by design (no server-side session/call tracking): the model
- *    is expected to collect the code once at the start of the call, then
- *    silently attach it to every subsequent tool call for the rest of that
- *    call, the same way it's expected to remember conversation_id after
- *    verify_caller. See AGENTS.md for the exact system-prompt wiring.
+ * 2. A per-account 6-digit phone access code (profiles.phoneAccessCodeHash),
+ *    passed as `access_code` on every tool call and looked up via
+ *    getProfileByAccessCode. This is the actual "which account is this call
+ *    for" identity -- the bridge secret alone only proves "this is x.ai
+ *    calling," not which caller's account to use. Stateless by design (no
+ *    server-side session/call tracking): the model is expected to collect
+ *    the code once at the start of the call, then silently attach it to
+ *    every subsequent tool call for the rest of that call, the same way
+ *    it's expected to remember conversation_id after verify_caller. See
+ *    AGENTS.md for the exact system-prompt wiring.
+ *
+ *    A code can come from Settings -> Phone Access Code (an existing Clerk
+ *    account opting in), OR be self-registered: if verify_caller is given a
+ *    well-formed code that doesn't match anything, it creates a brand-new,
+ *    phone-only account for it on the spot (createProfileForAccessCode) and
+ *    reports is_new_account so the agent knows to ask the caller's name.
+ *    This means verify_caller itself never "fails" a well-formed code --
+ *    there's no such thing as a wrong code, only an unclaimed one -- so
+ *    brute-force lockout doesn't apply there. It still applies to every
+ *    OTHER tool, which require a code that's already resolved to a profile
+ *    (i.e., a call that skipped verify_caller, or a stale/malformed code).
  *
  * Voice-profile matching: xAI's Voice Agent tool-calling is text-only --
  * arguments are derived from the transcript, and there is no documented way
@@ -82,11 +100,24 @@ const TOOLS = [
   {
     name: "verify_caller",
     description:
-      "Identify which account this call belongs to, using the 6-digit phone access code the caller gives you. Call this FIRST, before anything else -- every other tool needs the account it identifies. Starts a new call record (like a conversation in the app) and returns its conversation_id, which you must include on every log_message call for the rest of this call.",
+      "Identify which account this call belongs to, using the 6-digit phone access code the caller gives you. Call this FIRST, before anything else -- every other tool needs the account it identifies. If the code doesn't match an existing account, a brand-new one is created for it automatically -- the response's is_new_account will be true and preferred_name will be empty, which means you should warmly ask the caller their name next and save it with set_caller_name. Starts a new call record (like a conversation in the app) and returns its conversation_id, which you must include on every log_message call for the rest of this call.",
     inputSchema: {
       type: "object",
       properties: ACCESS_CODE_PROPERTY,
       required: ["access_code"],
+    },
+  },
+  {
+    name: "set_caller_name",
+    description:
+      "Save the caller's name to their account. Call this once, right after verify_caller, whenever is_new_account was true or preferred_name came back empty -- ask warmly what they'd like to be called, then save their answer here.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...ACCESS_CODE_PROPERTY,
+        name: { type: "string", description: "The name the caller wants to be called." },
+      },
+      required: ["access_code", "name"],
     },
   },
   {
@@ -141,19 +172,18 @@ async function handleToolCall(name: string, args: Record<string, unknown> | unde
   if (!accessCode) {
     return toolText("No access_code provided. Ask the caller for their 6-digit phone access code and call verify_caller with it first.", true);
   }
-
-  if (isPhoneBridgeLockedOut()) {
-    return toolText("Too many incorrect codes recently -- try again later.", true);
+  if (!PHONE_ACCESS_CODE_PATTERN.test(accessCode)) {
+    return toolText("A phone access code is exactly 6 digits. Ask the caller to repeat theirs.", true);
   }
-
-  const profile = await getProfileByAccessCode(accessCode);
-  if (!profile) {
-    recordFailedPhoneBridgeAttempt();
-    return toolText("That code doesn't match any account. Ask the caller to double-check their 6-digit phone access code.", true);
-  }
-  clearFailedPhoneBridgeAttempts();
 
   if (name === "verify_caller") {
+    let profile = await getProfileByAccessCode(accessCode);
+    let isNewAccount = false;
+    if (!profile) {
+      profile = await createProfileForAccessCode(accessCode);
+      isNewAccount = true;
+    }
+
     const [conversation] = await db
       .insert(conversationsTable)
       .values({
@@ -168,6 +198,7 @@ async function handleToolCall(name: string, args: Record<string, unknown> | unde
           type: "text",
           text: JSON.stringify({
             conversation_id: conversation.id,
+            is_new_account: isNewAccount,
             preferred_name: profile.preferredName,
             companion_name: profile.companionName,
             wait_for_keyword: profile.keywordModeEnabled,
@@ -176,6 +207,29 @@ async function handleToolCall(name: string, args: Record<string, unknown> | unde
         },
       ],
     };
+  }
+
+  // Every other tool needs a code that's already resolved to a real
+  // account. Unlike verify_caller (which self-registers an unclaimed code
+  // rather than ever failing), a not-found code here means the model
+  // skipped verify_caller or is holding a stale/malformed code -- worth
+  // rate-limiting, since it's the one path where repeated guesses could
+  // probe for existing accounts.
+  if (isPhoneBridgeLockedOut()) {
+    return toolText("Too many unrecognized codes recently -- try again later.", true);
+  }
+  const profile = await getProfileByAccessCode(accessCode);
+  if (!profile) {
+    recordFailedPhoneBridgeAttempt();
+    return toolText("That code isn't verified yet -- call verify_caller with it first.", true);
+  }
+  clearFailedPhoneBridgeAttempts();
+
+  if (name === "set_caller_name") {
+    const callerName = typeof args?.name === "string" ? args.name.trim() : "";
+    if (!callerName) return toolText("No name provided, nothing saved.", true);
+    await db.update(profilesTable).set({ preferredName: callerName }).where(eq(profilesTable.userId, profile.userId));
+    return toolText(`Saved -- I'll call you ${callerName}.`);
   }
 
   if (name === "get_memories") {
