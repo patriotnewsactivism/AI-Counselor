@@ -109,7 +109,13 @@ const PROVIDERS: Provider[] = [
     baseUrl: "https://kilo.ai/api/openrouter/v1/chat/completions",
     apiKeyEnv: "KILOCODE_API_KEY",
     model: "kilo-auto/free",
-    supportsJsonMode: true,
+    // kilo.ai's auto-router rejects response_format outright (HTTP 400
+    // "Invalid input" / param response_format) despite being an
+    // OpenRouter-compatible endpoint -- confirmed in production logs
+    // 2026-07-26, every single jsonMode (extractMemories) call that
+    // reached this rung failed deterministically. Not a flaky/transient
+    // issue, so this must stay false rather than true.
+    supportsJsonMode: false,
   },
   // 70B — Groq's outgoing flagship, still serving until 2026-08-16. General-purpose,
   // not reasoning-tuned, so it sits behind the reasoning-focused models above.
