@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
 import { format } from "date-fns";
-import { History as HistoryIcon, Lock, Trash2, MessageCircle, Loader2 } from "lucide-react";
+import { History as HistoryIcon, Lock, Trash2, MessageCircle, Loader2, Download } from "lucide-react";
 import {
   useGetProfile,
   useListConversations,
   useDeleteConversation,
   useSetHistoryPin,
   useUnlockHistory,
+  listMessages,
   getListConversationsQueryKey,
   getGetProfileQueryKey,
 } from "@workspace/api-client-react";
@@ -28,6 +29,7 @@ export default function HistoryPage() {
   const [token, setToken] = useState<string | null>(() => getHistoryToken());
   const [pin, setPin] = useState("");
   const [confirmPin, setConfirmPin] = useState("");
+  const [exportingId, setExportingId] = useState<number | null>(null);
 
   const setHistoryPin = useSetHistoryPin();
   const unlockHistory = useUnlockHistory();
@@ -102,6 +104,32 @@ export default function HistoryPage() {
       queryClient.invalidateQueries({ queryKey: getListConversationsQueryKey() });
     } catch {
       toast({ title: "Couldn't delete that conversation", variant: "destructive" });
+    }
+  };
+
+  const handleExport = async (id: number, title: string | null) => {
+    setExportingId(id);
+    try {
+      const messages = await listMessages(id);
+      const lines = messages.map((m) => {
+        const who = m.role === "user" ? m.speakerName || "You" : "Companion";
+        const when = format(new Date(m.createdAt), "MMM d, yyyy h:mm a");
+        return `[${when}] ${who}: ${m.content}`;
+      });
+      const blob = new Blob([lines.join("\n\n")], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const safeTitle = (title || "conversation").replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+      link.href = url;
+      link.download = `${safeTitle}-${id}.txt`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch {
+      toast({ title: "Couldn't export that transcript", variant: "destructive" });
+    } finally {
+      setExportingId(null);
     }
   };
 
@@ -234,15 +262,28 @@ export default function HistoryPage() {
                         Updated {format(new Date(conv.updatedAt), "MMM d, yyyy 'at' h:mm a")}
                       </p>
                     </Link>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="text-muted-foreground hover:text-destructive hover:bg-destructive/10 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                      onClick={() => handleDelete(conv.id)}
-                      disabled={deleteConversation.isPending}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+                    <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="text-muted-foreground hover:text-foreground hover:bg-accent"
+                        onClick={() => handleExport(conv.id, conv.title)}
+                        disabled={exportingId === conv.id}
+                        aria-label="Download transcript"
+                      >
+                        {exportingId === conv.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                        onClick={() => handleDelete(conv.id)}
+                        disabled={deleteConversation.isPending}
+                        aria-label="Delete conversation"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
                   </CardContent>
                 </Card>
               ))}

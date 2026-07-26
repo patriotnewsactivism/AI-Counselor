@@ -16,6 +16,12 @@ export interface Profile {
   companionName: string;
   /** True if a History PIN is configured, gating access to past conversations */
   historyPinEnabled: boolean;
+  /** True if a 6-digit phone access code is configured, letting the phone line identify this account */
+  phoneAccessCodeEnabled: boolean;
+  /** True if live voice (browser and phone) should wait for keywordWord instead of ending a turn on silence */
+  keywordModeEnabled: boolean;
+  /** The keyword that ends a turn when keywordModeEnabled is true */
+  keywordWord: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -24,6 +30,12 @@ export interface ProfileUpdate {
   preferredName?: string;
   /** @minLength 1 */
   companionName?: string;
+  keywordModeEnabled?: boolean;
+  /**
+     * @minLength 1
+     * @maxLength 32
+     */
+  keywordWord?: string;
 }
 
 export interface Stats {
@@ -141,6 +153,20 @@ export interface HistoryPinRemovalInput {
 
 export interface HistoryUnlockInput {
   pin: string;
+}
+
+export interface PhoneAccessCodeInput {
+  /**
+     * New 6-digit numeric phone access code
+     * @pattern ^[0-9]{6}$
+     */
+  code: string;
+  /** Required (and must be correct) when a code is already set */
+  currentCode?: string;
+}
+
+export interface PhoneAccessCodeRemovalInput {
+  currentCode: string;
 }
 
 export interface HistoryTokenResponse {

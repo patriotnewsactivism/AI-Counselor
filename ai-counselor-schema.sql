@@ -3,13 +3,19 @@
 -- Idempotent: safe to re-run.
 
 CREATE TABLE IF NOT EXISTS profiles (
-  user_id            text PRIMARY KEY,
-  preferred_name     text,
-  companion_name     text NOT NULL DEFAULT 'Clara',
-  history_pin_hash   text,
-  created_at         timestamptz NOT NULL DEFAULT now(),
-  updated_at         timestamptz NOT NULL DEFAULT now()
+  user_id                  text PRIMARY KEY,
+  preferred_name           text,
+  companion_name           text NOT NULL DEFAULT 'Clara',
+  history_pin_hash         text,
+  phone_access_code_hash   text,
+  keyword_mode_enabled     boolean NOT NULL DEFAULT false,
+  keyword_word             text NOT NULL DEFAULT 'over',
+  created_at               timestamptz NOT NULL DEFAULT now(),
+  updated_at               timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS phone_access_code_hash text;
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS keyword_mode_enabled boolean NOT NULL DEFAULT false;
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS keyword_word text NOT NULL DEFAULT 'over';
 
 CREATE TABLE IF NOT EXISTS conversations (
   id          serial PRIMARY KEY,

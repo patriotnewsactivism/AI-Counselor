@@ -4,12 +4,13 @@ import { db, profilesTable } from "@workspace/db";
 import { GetProfileResponse, UpdateProfileBody, UpdateProfileResponse } from "@workspace/api-zod";
 import { requireAuth, type AuthedRequest } from "../middlewares/requireAuth";
 import { getOrCreateProfile } from "../lib/getOrCreateProfile";
+import { toProfileResponse } from "../lib/toProfileResponse";
 
 const router: IRouter = Router();
 
 router.get("/profile", requireAuth, async (req, res): Promise<void> => {
   const profile = await getOrCreateProfile((req as AuthedRequest).userId);
-  res.json(GetProfileResponse.parse({ ...profile, historyPinEnabled: Boolean(profile.historyPinHash) }));
+  res.json(GetProfileResponse.parse(toProfileResponse(profile)));
 });
 
 router.patch("/profile", requireAuth, async (req, res): Promise<void> => {
@@ -28,7 +29,7 @@ router.patch("/profile", requireAuth, async (req, res): Promise<void> => {
     .where(eq(profilesTable.userId, userId))
     .returning();
 
-  res.json(UpdateProfileResponse.parse({ ...updated, historyPinEnabled: Boolean(updated.historyPinHash) }));
+  res.json(UpdateProfileResponse.parse(toProfileResponse(updated)));
 });
 
 export default router;

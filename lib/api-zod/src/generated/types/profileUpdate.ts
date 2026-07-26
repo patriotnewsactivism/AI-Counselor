@@ -10,4 +10,10 @@ export interface ProfileUpdate {
   preferredName?: string;
   /** @minLength 1 */
   companionName?: string;
+  keywordModeEnabled?: boolean;
+  /**
+     * @minLength 1
+     * @maxLength 32
+     */
+  keywordWord?: string;
 }
