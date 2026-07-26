@@ -43,6 +43,20 @@ export async function runCompanionExchange(params: {
     .from(memoriesTable)
     .where(eq(memoriesTable.userId, profile.userId));
 
+  // Generate BEFORE persisting. The user's turn used to be written first, so
+  // any LLM failure left an orphaned user message with no reply — which then
+  // fed back into `history` on the next turn and skewed later replies. The
+  // reply doesn't need the row to exist (userContent is passed separately),
+  // so on failure this now throws having written nothing, and a retry is clean.
+  const replyText = await generateCompanionReply({
+    companionName: profile.companionName,
+    preferredName: profile.preferredName,
+    memories: existingMemories.map((m) => m.content),
+    history,
+    userMessage: userContent,
+    speakerName: params.speakerName ?? null,
+  });
+
   const [userMessage] = await db
     .insert(messagesTable)
     .values({
@@ -53,15 +67,6 @@ export async function runCompanionExchange(params: {
       speakerName: params.speakerName ?? null,
     })
     .returning();
-
-  const replyText = await generateCompanionReply({
-    companionName: profile.companionName,
-    preferredName: profile.preferredName,
-    memories: existingMemories.map((m) => m.content),
-    history,
-    userMessage: userContent,
-    speakerName: params.speakerName ?? null,
-  });
 
   const [assistantMessage] = await db
     .insert(messagesTable)
@@ -121,17 +126,8 @@ export async function runCompanionExchangePipelined(
     .from(memoriesTable)
     .where(eq(memoriesTable.userId, profile.userId));
 
-  const [userMessage] = await db
-    .insert(messagesTable)
-    .values({
-      conversationId,
-      role: "user",
-      content: userContent,
-      audioMimeType: params.audioMimeType,
-      speakerName: params.speakerName ?? null,
-    })
-    .returning();
-
+  // Same ordering fix as runCompanionExchange: nothing is persisted until the
+  // reply actually generates, so a failed turn leaves no orphaned user row.
   const replyText = await generateCompanionReplyPipelined(
     {
       companionName: profile.companionName,
@@ -143,6 +139,17 @@ export async function runCompanionExchangePipelined(
     },
     onSentence,
   );
+
+  const [userMessage] = await db
+    .insert(messagesTable)
+    .values({
+      conversationId,
+      role: "user",
+      content: userContent,
+      audioMimeType: params.audioMimeType,
+      speakerName: params.speakerName ?? null,
+    })
+    .returning();
 
   const [assistantMessage] = await db
     .insert(messagesTable)

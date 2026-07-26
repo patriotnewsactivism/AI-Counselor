@@ -25,28 +25,65 @@ type Provider = {
   supportsJsonMode: boolean;
 };
 
+/** Per-provider request cap. The chain is sequential, so this bounds how
+ * long a user waits before the next provider is tried. It was 20s, which
+ * meant a fully-down chain could hang a voice turn for ~100s before
+ * surfacing an error. */
+const REQUEST_TIMEOUT_MS = 8000;
+const STREAM_TIMEOUT_MS = 10000;
+
+/** Ceiling on the whole sequential walk. Without this, the per-provider cap
+ * multiplies by the provider count — 11 entries would let a fully-dead chain
+ * hang a voice turn for ~88s. Better to surface a failure the caller can
+ * speak aloud than to leave someone waiting in silence. */
+const CHAIN_BUDGET_MS = 25000;
+
+const CEREBRAS_URL = "https://api.cerebras.ai/v1/chat/completions";
+const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
+
+/**
+ * Ordered smartest -> weakest across the free providers we hold keys for,
+ * with the one paid provider pinned last. Parameter counts are the ranking
+ * signal; both hosts are fast enough that the biggest model is still well
+ * inside voice-latency budget (Cerebras serves GLM 4.7 at ~1000 tok/s and
+ * gpt-oss-120b at ~3000 tok/s).
+ *
+ * Several IDs here are on announced shutdown schedules (Groq retires
+ * llama-3.3-70b-versatile on 2026-08-16; Cerebras retires zai-glm-4.7 on
+ * 2026-08-17 and recommends moving off llama3.1-8b). Rather than swap them
+ * blind, each successor is listed AHEAD of the model it replaces — if the
+ * newer ID is good we use it, and if it isn't we fall through to the old one
+ * until its shutdown date. The cutovers then need no code change.
+ */
 const PROVIDERS: Provider[] = [
+  // 355B — largest model available on any of these free tiers.
   {
-    name: "groq",
-    baseUrl: "https://api.groq.com/openai/v1/chat/completions",
-    apiKeyEnv: "GROQ_API_KEY",
-    model: "llama-3.3-70b-versatile",
-    supportsJsonMode: true,
-  },
-  {
-    name: "cerebras",
-    baseUrl: "https://api.cerebras.ai/v1/chat/completions",
+    name: "cerebras-glm-4.7",
+    baseUrl: CEREBRAS_URL,
     apiKeyEnv: "CEREBRAS_API_KEY",
-    model: "llama3.1-8b",
+    model: "zai-glm-4.7",
     supportsJsonMode: false,
   },
+  // 120B, ~3000 tok/s, and Cerebras's only *production* (non-preview) tier —
+  // the steadiest of the large options, so it backs the 355B preview model.
   {
-    name: "mistral",
-    baseUrl: "https://api.mistral.ai/v1/chat/completions",
-    apiKeyEnv: "MISTRAL_API_KEY",
-    model: "mistral-small-latest",
+    name: "cerebras-gpt-oss-120b",
+    baseUrl: CEREBRAS_URL,
+    apiKeyEnv: "CEREBRAS_API_KEY",
+    model: "gpt-oss-120b",
+    supportsJsonMode: false,
+  },
+  // Same 120B weights on separate infrastructure and a separate quota, so a
+  // Cerebras outage or daily-cap exhaustion doesn't take this tier with it.
+  {
+    name: "groq-gpt-oss-120b",
+    baseUrl: GROQ_URL,
+    apiKeyEnv: "GROQ_API_KEY",
+    model: "openai/gpt-oss-120b",
     supportsJsonMode: true,
   },
+  // 70B, but an OpenRouter ":free" pool — capable yet aggressively throttled,
+  // so it sits below the dedicated 120B tiers.
   {
     // kilocode.ai migrated to kilo.ai -- old host 308-redirects and silently
     // eats POST bodies on most HTTP clients, so this MUST be kilo.ai directly.
@@ -56,11 +93,60 @@ const PROVIDERS: Provider[] = [
     model: "meta-llama/llama-3.3-70b-instruct:free",
     supportsJsonMode: true,
   },
+  // 70B — Groq's outgoing flagship, still serving until 2026-08-16.
   {
-    // Alibaba Cloud Model Studio, international endpoint (not the mainland
-    // Bailian console -- separate account/URL). PAID pay-as-you-go, kept
-    // last since every provider above it is free.
-    name: "qwen",
+    name: "groq-llama-3.3-70b",
+    baseUrl: GROQ_URL,
+    apiKeyEnv: "GROQ_API_KEY",
+    model: "llama-3.3-70b-versatile",
+    supportsJsonMode: true,
+  },
+  // 31B
+  {
+    name: "cerebras-gemma-4-31b",
+    baseUrl: CEREBRAS_URL,
+    apiKeyEnv: "CEREBRAS_API_KEY",
+    model: "gemma-4-31b",
+    supportsJsonMode: false,
+  },
+  // ~27B
+  {
+    name: "groq-qwen3.6-27b",
+    baseUrl: GROQ_URL,
+    apiKeyEnv: "GROQ_API_KEY",
+    model: "qwen/qwen3.6-27b",
+    supportsJsonMode: true,
+  },
+  // ~24B
+  {
+    name: "mistral",
+    baseUrl: "https://api.mistral.ai/v1/chat/completions",
+    apiKeyEnv: "MISTRAL_API_KEY",
+    model: "mistral-small-latest",
+    supportsJsonMode: true,
+  },
+  // 8B — weakest, and deprecated. Last free rung before we start paying.
+  {
+    name: "cerebras-llama3.1-8b",
+    baseUrl: CEREBRAS_URL,
+    apiKeyEnv: "CEREBRAS_API_KEY",
+    model: "llama3.1-8b",
+    supportsJsonMode: false,
+  },
+  // Alibaba Cloud Model Studio, international endpoint (not the mainland
+  // Bailian console -- separate account/URL). PAID pay-as-you-go, kept last
+  // since every provider above it is free. qwen3-coder-plus is a
+  // code-specialised model and a poor fit for an empathetic companion, so a
+  // general chat model leads and the coder model stays only as a backstop.
+  {
+    name: "qwen-plus",
+    baseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
+    apiKeyEnv: "QWENCLOUD_API_KEY",
+    model: "qwen-plus",
+    supportsJsonMode: false,
+  },
+  {
+    name: "qwen-coder",
     baseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
     apiKeyEnv: "QWENCLOUD_API_KEY",
     model: "qwen3-coder-plus",
@@ -70,6 +156,92 @@ const PROVIDERS: Provider[] = [
 
 function availableProviders(): Provider[] {
   return PROVIDERS.filter((p) => !!process.env[p.apiKeyEnv]);
+}
+
+export interface ProviderProbe {
+  name: string;
+  model: string;
+  configured: boolean;
+  ok: boolean;
+  status: number | null;
+  latencyMs: number | null;
+  error: string | null;
+}
+
+/**
+ * Pings every provider with a throwaway 1-token completion and reports which
+ * ones actually answer. Exists because a failing chain is otherwise invisible
+ * from outside the server: the UI collapses every cause into one generic
+ * message, so "wrong key" and "model decommissioned" and "daily cap hit" all
+ * look identical. Probes run concurrently — this is a diagnostic, not the
+ * request path, so there's no reason to walk it in priority order.
+ *
+ * Never returns key material: only the provider name, model ID, HTTP status,
+ * and a truncated response body.
+ */
+export async function probeProviders(): Promise<ProviderProbe[]> {
+  return Promise.all(
+    PROVIDERS.map(async (provider): Promise<ProviderProbe> => {
+      const key = process.env[provider.apiKeyEnv];
+      if (!key) {
+        return {
+          name: provider.name,
+          model: provider.model,
+          configured: false,
+          ok: false,
+          status: null,
+          latencyMs: null,
+          error: `${provider.apiKeyEnv} not set`,
+        };
+      }
+
+      const startedAt = Date.now();
+      try {
+        const res = await fetch(provider.baseUrl, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: provider.model,
+            messages: [{ role: "user", content: "ping" }],
+            max_tokens: 1,
+          }),
+          signal: AbortSignal.timeout(6000),
+        });
+        const latencyMs = Date.now() - startedAt;
+        if (!res.ok) {
+          const body = await res.text().catch(() => "");
+          return {
+            name: provider.name,
+            model: provider.model,
+            configured: true,
+            ok: false,
+            status: res.status,
+            latencyMs,
+            error: body.slice(0, 200) || res.statusText,
+          };
+        }
+        return {
+          name: provider.name,
+          model: provider.model,
+          configured: true,
+          ok: true,
+          status: res.status,
+          latencyMs,
+          error: null,
+        };
+      } catch (err) {
+        return {
+          name: provider.name,
+          model: provider.model,
+          configured: true,
+          ok: false,
+          status: null,
+          latencyMs: Date.now() - startedAt,
+          error: String(err).slice(0, 200),
+        };
+      }
+    }),
+  );
 }
 
 /**
@@ -94,7 +266,12 @@ export async function fallbackGenerateContent(params: {
   ];
 
   let lastError: unknown;
+  const deadline = Date.now() + CHAIN_BUDGET_MS;
   for (const provider of providers) {
+    if (Date.now() > deadline) {
+      console.warn(`[companion-llm] chain budget exhausted before trying ${provider.name}`);
+      break;
+    }
     try {
       const body: Record<string, unknown> = {
         model: provider.model,
@@ -112,7 +289,7 @@ export async function fallbackGenerateContent(params: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(20000),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
 
       if (!res.ok) {
@@ -126,6 +303,9 @@ export async function fallbackGenerateContent(params: {
       return { text, provider: provider.name };
     } catch (err) {
       lastError = err;
+      // Previously swallowed silently, which is why a fully-dead chain looked
+      // like an unexplained generic error with nothing in the logs.
+      console.warn(`[companion-llm] ${provider.name} (${provider.model}) failed: ${String(err)}`);
       continue; // try next provider
     }
   }
@@ -157,7 +337,12 @@ export async function fallbackGenerateContentStream(
   ];
 
   let lastError: unknown;
+  const deadline = Date.now() + CHAIN_BUDGET_MS;
   for (const provider of providers) {
+    if (Date.now() > deadline) {
+      console.warn(`[companion-llm] chain budget exhausted before trying ${provider.name}`);
+      break;
+    }
     try {
       const res = await fetch(provider.baseUrl, {
         method: "POST",
@@ -171,7 +356,7 @@ export async function fallbackGenerateContentStream(
           max_tokens: params.maxTokens ?? 2048,
           stream: true,
         }),
-        signal: AbortSignal.timeout(30000),
+        signal: AbortSignal.timeout(STREAM_TIMEOUT_MS),
       });
 
       if (!res.ok || !res.body) {
@@ -223,6 +408,7 @@ export async function fallbackGenerateContentStream(
       return { text: full, provider: provider.name };
     } catch (err) {
       lastError = err;
+      console.warn(`[companion-llm] ${provider.name} (${provider.model}) stream failed: ${String(err)}`);
       continue; // try next provider
     }
   }

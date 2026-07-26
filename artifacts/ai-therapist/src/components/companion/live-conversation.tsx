@@ -69,6 +69,10 @@ const KEYWORD_MODE_STORAGE_KEY = "ai-therapist:keywordMode";
 const KEYWORD_WORD_STORAGE_KEY = "ai-therapist:keywordWord";
 const DEFAULT_KEYWORD = "over";
 
+/** Consecutive `service-not-allowed` errors tolerated before we conclude the
+ * browser's speech backend genuinely can't serve this session. */
+const MAX_SERVICE_ERRORS = 4;
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -125,6 +129,7 @@ export function LiveConversation({ onSendTurn, companionName }: LiveConversation
   // session on its own after a while) until the keyword ends the turn.
   const turnTextRef = useRef("");
   const keywordTriggeredRef = useRef(false);
+  const serviceErrorCountRef = useRef(0);
 
   const updatePhase = (next: Phase) => {
     phaseRef.current = next;
@@ -176,6 +181,11 @@ export function LiveConversation({ onSendTurn, companionName }: LiveConversation
     }
   };
 
+  /** Backs off while the speech backend is refusing sessions, so a run of
+   * `service-not-allowed` errors doesn't become a tight restart loop. */
+  const restartDelay = (base: number) =>
+    serviceErrorCountRef.current > 0 ? 600 * serviceErrorCountRef.current : base;
+
   const scheduleRestart = (delay = 250) => {
     clearRestartTimer();
     restartTimerRef.current = window.setTimeout(() => {
@@ -199,6 +209,9 @@ export function LiveConversation({ onSendTurn, companionName }: LiveConversation
     let finalText = "";
 
     recognition.onstart = () => {
+      // A session that actually opened clears the strike count, so only a
+      // sustained run of refusals — not scattered ones — ends the session.
+      serviceErrorCountRef.current = 0;
       if (activeRef.current && !busyRef.current) updatePhase("listening");
     };
 
@@ -236,11 +249,29 @@ export function LiveConversation({ onSendTurn, companionName }: LiveConversation
 
     recognition.onerror = (event) => {
       const errorKind = event.error;
-      if (errorKind === "not-allowed" || errorKind === "service-not-allowed") {
+      if (errorKind === "not-allowed") {
+        // A genuine permission denial — retrying can't help, so end cleanly.
         setError(
           "Microphone access is blocked. Enable the mic permission for this site in your browser, then tap Start again.",
         );
         stop();
+        return;
+      }
+      if (errorKind === "service-not-allowed") {
+        // NOT the same as a permission denial: the browser's speech backend
+        // intermittently refuses a session (common on mobile Safari and on
+        // Chromium builds without Google's speech service). This used to call
+        // stop(), which ended the whole session the instant it happened —
+        // the "mic turns itself on then straight back off" behaviour. Ride
+        // out a few of these before giving up, and let onend restart us.
+        serviceErrorCountRef.current += 1;
+        if (serviceErrorCountRef.current >= MAX_SERVICE_ERRORS) {
+          setError(
+            "This browser's speech service keeps refusing the microphone. Try Chrome on desktop or Android, or use the keyboard below.",
+          );
+          stop();
+        }
+        return;
       }
       // "no-speech", "aborted", "network", etc. fall through to onend, which
       // decides whether to loop the mic again.
@@ -262,14 +293,14 @@ export function LiveConversation({ onSendTurn, companionName }: LiveConversation
           return;
         }
         if (said) turnTextRef.current = `${turnTextRef.current} ${said}`.trim();
-        if (!busyRef.current) scheduleRestart(150);
+        if (!busyRef.current) scheduleRestart(restartDelay(150));
         return;
       }
 
       if (said) {
         void handleUtterance(said);
       } else if (!busyRef.current) {
-        scheduleRestart(300);
+        scheduleRestart(restartDelay(300));
       }
     };
 
@@ -348,6 +379,7 @@ export function LiveConversation({ onSendTurn, companionName }: LiveConversation
     busyRef.current = false;
     turnTextRef.current = "";
     keywordTriggeredRef.current = false;
+    serviceErrorCountRef.current = 0;
     setActive(true);
     updatePhase("listening");
     // Priming a (silent) utterance inside the tap keeps mobile browsers from

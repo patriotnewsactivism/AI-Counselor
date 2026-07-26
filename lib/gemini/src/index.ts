@@ -6,6 +6,7 @@ import { fallbackGenerateContent, fallbackGenerateContentStream } from "./fallba
 // path below no longer touches Gemini at all as of 2026-07-21.
 export { ai, GEMINI_MODEL } from "./client";
 export { identifyOrEnrollSpeaker, type EnrolledProfile, type SpeakerResult } from "./speaker";
+export { probeProviders, type ProviderProbe } from "./fallback";
 
 export interface ChatTurn {
   role: "user" | "assistant";
