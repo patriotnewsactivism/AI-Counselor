@@ -22,6 +22,8 @@ tags:
     description: Persistent voice recognition profiles
   - name: history
     description: History PIN — gates access to past conversations
+  - name: phone-access
+    description: Phone access code — lets the phone-hosted voice agent identify an account
 paths:
   /healthz:
     get:
@@ -344,6 +346,54 @@ paths:
           description: Incorrect PIN
         "429":
           description: Too many failed attempts — temporarily locked out
+  /phone-access/code:
+    post:
+      operationId: setPhoneAccessCode
+      tags: [phone-access]
+      summary: Set or change the 6-digit code that identifies this account on the phone line
+      description: >
+        If a code is already set, currentCode must be supplied and correct.
+        This code is not used for anything inside the app — it exists purely
+        so the phone-hosted xAI Voice Agent can tell which account a call
+        belongs to, since a call has no Clerk session.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhoneAccessCodeInput"
+      responses:
+        "200":
+          description: Code set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Profile"
+        "403":
+          description: currentCode missing or incorrect
+        "429":
+          description: Too many failed attempts — temporarily locked out
+    delete:
+      operationId: removePhoneAccessCode
+      tags: [phone-access]
+      summary: Remove the phone access code, disabling phone-line identification for this account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhoneAccessCodeRemovalInput"
+      responses:
+        "200":
+          description: Code removed (or was never set)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Profile"
+        "403":
+          description: currentCode incorrect
+        "429":
+          description: Too many failed attempts — temporarily locked out
   /voice-profiles/{id}:
     patch:
       operationId: updateVoiceProfile
@@ -396,7 +446,17 @@ components:
         - status
     Profile:
       type: object
-      required: [userId, companionName, historyPinEnabled, createdAt, updatedAt]
+      required:
+        [
+          userId,
+          companionName,
+          historyPinEnabled,
+          phoneAccessCodeEnabled,
+          keywordModeEnabled,
+          keywordWord,
+          createdAt,
+          updatedAt,
+        ]
       properties:
         userId: { type: string }
         preferredName: { type: ["string", "null"] }
@@ -404,6 +464,15 @@ components:
         historyPinEnabled:
           type: boolean
           description: True if a History PIN is configured, gating access to past conversations
+        phoneAccessCodeEnabled:
+          type: boolean
+          description: True if a 6-digit phone access code is configured, letting the phone line identify this account
+        keywordModeEnabled:
+          type: boolean
+          description: True if live voice (browser and phone) should wait for keywordWord instead of ending a turn on silence
+        keywordWord:
+          type: string
+          description: The keyword that ends a turn when keywordModeEnabled is true
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
     ProfileUpdate:
@@ -411,6 +480,8 @@ components:
       properties:
         preferredName: { type: string }
         companionName: { type: string, minLength: 1 }
+        keywordModeEnabled: { type: boolean }
+        keywordWord: { type: string, minLength: 1, maxLength: 32 }
     Stats:
       type: object
       required:
@@ -525,6 +596,22 @@ components:
       required: [pin]
       properties:
         pin: { type: string }
+    PhoneAccessCodeInput:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+          pattern: "^[0-9]{6}$"
+          description: New 6-digit numeric phone access code
+        currentCode:
+          type: string
+          description: Required (and must be correct) when a code is already set
+    PhoneAccessCodeRemovalInput:
+      type: object
+      required: [currentCode]
+      properties:
+        currentCode: { type: string }
     HistoryTokenResponse:
       type: object
       required: [token, expiresAt]

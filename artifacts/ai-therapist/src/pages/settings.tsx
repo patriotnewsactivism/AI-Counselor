@@ -15,6 +15,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { VoiceProfilesSection } from "@/components/settings/voice-profiles";
 import { HistoryPinSection } from "@/components/settings/history-pin";
+import { PhoneAccessCodeSection } from "@/components/settings/phone-access-code";
+import { CallPreferencesSection } from "@/components/settings/call-preferences";
 
 export default function SettingsPage() {
   const { data: profile, isLoading: isLoadingProfile } = useGetProfile();
@@ -158,6 +160,10 @@ export default function SettingsPage() {
           </section>
 
           <VoiceProfilesSection />
+
+          <PhoneAccessCodeSection />
+
+          <CallPreferencesSection />
 
           <HistoryPinSection />
 

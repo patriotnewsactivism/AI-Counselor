@@ -1,6 +1,8 @@
 import { Router, type IRouter } from "express";
-import { asc, desc, eq } from "drizzle-orm";
-import { db, memoriesTable, profilesTable } from "@workspace/db";
+import { desc, eq } from "drizzle-orm";
+import { db, memoriesTable, conversationsTable, messagesTable } from "@workspace/db";
+import { getProfileByAccessCode, isPhoneBridgeLockedOut, recordFailedPhoneBridgeAttempt, clearFailedPhoneBridgeAttempts } from "../lib/phoneAccess";
+import { findOwnedConversation } from "./conversations/shared";
 
 /**
  * MCP bridge for the phone-based Grok voice agent (hosted entirely on x.ai's
@@ -15,16 +17,34 @@ import { db, memoriesTable, profilesTable } from "@workspace/db";
  * to avoid touching pnpm-lock.yaml / adding a new dependency under time
  * pressure -- this is a small, self-contained protocol surface.
  *
- * Auth: a static shared secret (MCP_BRIDGE_SECRET env var), checked via
- * `Authorization: Bearer <secret>` -- NOT Clerk. A phone call has no Clerk
- * session, so this deliberately bypasses requireAuth and instead relies on
- * the secret being known only to this server and x.ai's connector config.
+ * Auth: two layers, both required.
+ * 1. A static shared secret (MCP_BRIDGE_SECRET env var), checked via
+ *    `Authorization: Bearer <secret>` -- proves the caller is x.ai's
+ *    connector, not Clerk (a phone call has no Clerk session).
+ * 2. A per-account 6-digit phone access code (profiles.phoneAccessCodeHash,
+ *    set in Settings -> Phone Access Code), passed as `access_code` on every
+ *    tool call and looked up via getProfileByAccessCode. This is the actual
+ *    "which account is this call for" identity -- the bridge secret alone
+ *    only proves "this is x.ai calling," not which caller's account to use.
+ *    Stateless by design (no server-side session/call tracking): the model
+ *    is expected to collect the code once at the start of the call, then
+ *    silently attach it to every subsequent tool call for the rest of that
+ *    call, the same way it's expected to remember conversation_id after
+ *    verify_caller. See AGENTS.md for the exact system-prompt wiring.
  *
- * Single-user assumption: this app currently has exactly one profile (Don's
- * own account). Rather than solve caller-ID-to-profile mapping (which would
- * need a schema change -- out of scope for this pass, and schema changes
- * need Don's explicit sign-off separately), this bridge just operates on
- * the first profile row. Revisit if this app ever needs multiple users.
+ * Voice-profile matching: xAI's Voice Agent tool-calling is text-only --
+ * arguments are derived from the transcript, and there is no documented way
+ * for the model to pass raw call audio into a function argument, nor a
+ * webhook/export mechanism for this server to receive call audio
+ * out-of-band (confirmed against xAI's docs, not assumed). True
+ * voice-biometric caller identification (matching this app's existing
+ * `identifyOrEnrollSpeaker` / voiceProfiles, which the web app already does
+ * with real audio) is therefore not achievable over this integration. What
+ * IS achievable, and what log_message's speaker_name argument does: the
+ * same self-reported-name pattern speaker.ts already uses as its fallback
+ * (introducedName, e.g. "Hi, I'm Sarah") -- Anna asks or infers who's
+ * speaking and tags it, same as the app's existing per-message speakerName
+ * column, just without an audio-backed voiceProfiles enrollment behind it.
  */
 
 const router: IRouter = Router();
@@ -47,14 +67,36 @@ function rpcError(id: string | number | null | undefined, code: number, message:
   return { jsonrpc: "2.0", id: id ?? null, error: { code, message } };
 }
 
+function toolText(text: string, isError = false) {
+  return isError ? { content: [{ type: "text", text }], isError: true } : { content: [{ type: "text", text }] };
+}
+
+const ACCESS_CODE_PROPERTY = {
+  access_code: {
+    type: "string",
+    description: "The caller's 6-digit phone access code, collected once at the start of the call and reused on every tool call for its duration.",
+  },
+} as const;
+
 const TOOLS = [
+  {
+    name: "verify_caller",
+    description:
+      "Identify which account this call belongs to, using the 6-digit phone access code the caller gives you. Call this FIRST, before anything else -- every other tool needs the account it identifies. Starts a new call record (like a conversation in the app) and returns its conversation_id, which you must include on every log_message call for the rest of this call.",
+    inputSchema: {
+      type: "object",
+      properties: ACCESS_CODE_PROPERTY,
+      required: ["access_code"],
+    },
+  },
   {
     name: "get_memories",
     description:
-      "Fetch remembered facts about the account owner (Don) from past companion conversations -- names of people in his life, ongoing situations, preferences, goals, recurring concerns. Call this at the start of a call to personalize the conversation the way the text/voice app already does.",
+      "Fetch remembered facts about the account owner from past companion conversations -- names of people in their life, ongoing situations, preferences, goals, recurring concerns. Call this after verify_caller to personalize the conversation the way the text/voice app already does.",
     inputSchema: {
       type: "object",
-      properties: {},
+      properties: ACCESS_CODE_PROPERTY,
+      required: ["access_code"],
     },
   },
   {
@@ -64,58 +106,120 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
+        ...ACCESS_CODE_PROPERTY,
         fact: {
           type: "string",
           description: "A short, standalone factual statement worth remembering long-term.",
         },
       },
-      required: ["fact"],
+      required: ["access_code", "fact"],
+    },
+  },
+  {
+    name: "log_message",
+    description:
+      "Record one turn of this call's transcript, so the call shows up in the app's History alongside text and web-voice conversations. Call this after EVERY turn -- both what the caller said (role=user) and what you said back (role=assistant) -- using the conversation_id verify_caller gave you. If you know who's speaking (they introduced themselves, or you recognize the household voice by name from earlier in the call), pass speaker_name -- this is a self-reported name, not voice-biometric identification, so only set it when the caller has actually identified themselves.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...ACCESS_CODE_PROPERTY,
+        conversation_id: { type: "integer", description: "The conversation_id returned by verify_caller." },
+        role: { type: "string", enum: ["user", "assistant"], description: "Who said this line." },
+        content: { type: "string", description: "What was said." },
+        speaker_name: {
+          type: "string",
+          description: "Self-reported name of the person speaking (role=user only), if known. Omit if unknown.",
+        },
+      },
+      required: ["access_code", "conversation_id", "role", "content"],
     },
   },
 ];
 
-async function getFirstProfile() {
-  // `.limit(1)` with no ORDER BY is nondeterministic -- Postgres is free to
-  // return rows in whatever order it finds convenient, which can change
-  // between queries. Ordering by createdAt makes "first" mean something
-  // concrete (the oldest account, i.e. the one made when Don first set the
-  // app up) instead of "whichever row Postgres felt like returning."
-  const [profile] = await db.select().from(profilesTable).orderBy(asc(profilesTable.createdAt)).limit(1);
-  return profile;
-}
-
 async function handleToolCall(name: string, args: Record<string, unknown> | undefined) {
+  const accessCode = typeof args?.access_code === "string" ? args.access_code.trim() : "";
+  if (!accessCode) {
+    return toolText("No access_code provided. Ask the caller for their 6-digit phone access code and call verify_caller with it first.", true);
+  }
+
+  if (isPhoneBridgeLockedOut()) {
+    return toolText("Too many incorrect codes recently -- try again later.", true);
+  }
+
+  const profile = await getProfileByAccessCode(accessCode);
+  if (!profile) {
+    recordFailedPhoneBridgeAttempt();
+    return toolText("That code doesn't match any account. Ask the caller to double-check their 6-digit phone access code.", true);
+  }
+  clearFailedPhoneBridgeAttempts();
+
+  if (name === "verify_caller") {
+    const [conversation] = await db
+      .insert(conversationsTable)
+      .values({
+        userId: profile.userId,
+        title: `Phone call — ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`,
+      })
+      .returning();
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            conversation_id: conversation.id,
+            preferred_name: profile.preferredName,
+            companion_name: profile.companionName,
+            wait_for_keyword: profile.keywordModeEnabled,
+            keyword: profile.keywordWord,
+          }),
+        },
+      ],
+    };
+  }
+
   if (name === "get_memories") {
-    const profile = await getFirstProfile();
-    if (!profile) {
-      return { content: [{ type: "text", text: "No profile found yet -- nothing remembered." }] };
-    }
     const memories = await db
       .select()
       .from(memoriesTable)
       .where(eq(memoriesTable.userId, profile.userId))
       .orderBy(desc(memoriesTable.createdAt));
-    const text =
-      memories.length === 0
-        ? "No remembered facts yet."
-        : memories.map((m) => `- ${m.content}`).join("\n");
-    return { content: [{ type: "text", text }] };
+    const text = memories.length === 0 ? "No remembered facts yet." : memories.map((m) => `- ${m.content}`).join("\n");
+    return toolText(text);
   }
 
   if (name === "save_memory") {
     const fact = typeof args?.fact === "string" ? args.fact.trim() : "";
-    if (!fact) {
-      return { content: [{ type: "text", text: "No fact provided, nothing saved." }], isError: true };
-    }
-    const profile = await getFirstProfile();
-    if (!profile) {
-      return { content: [{ type: "text", text: "No profile found yet -- could not save." }], isError: true };
-    }
+    if (!fact) return toolText("No fact provided, nothing saved.", true);
     await db.insert(memoriesTable).values({ userId: profile.userId, content: fact });
-    return { content: [{ type: "text", text: "Saved." }] };
+    return toolText("Saved.");
   }
 
-  return { content: [{ type: "text", text: `Unknown tool: ${name}` }], isError: true };
+  if (name === "log_message") {
+    const conversationId = typeof args?.conversation_id === "number" ? args.conversation_id : null;
+    const role = args?.role === "user" || args?.role === "assistant" ? args.role : null;
+    const content = typeof args?.content === "string" ? args.content.trim() : "";
+    const speakerName = typeof args?.speaker_name === "string" && args.speaker_name.trim() ? args.speaker_name.trim() : null;
+
+    if (!conversationId || !role || !content) {
+      return toolText("Missing conversation_id, role, or content -- nothing logged.", true);
+    }
+
+    const conversation = await findOwnedConversation(conversationId, profile.userId);
+    if (!conversation) {
+      return toolText("That conversation_id doesn't belong to this account -- call verify_caller again to get a fresh one.", true);
+    }
+
+    await db.insert(messagesTable).values({
+      conversationId,
+      role,
+      content,
+      speakerName: role === "user" ? speakerName : null,
+    });
+    return toolText("Logged.");
+  }
+
+  return toolText(`Unknown tool: ${name}`, true);
 }
 
 // The Streamable HTTP spec lets clients open a standalone GET/SSE stream for
@@ -166,7 +270,7 @@ router.post("/mcp/bridge", async (req, res): Promise<void> => {
         rpcResult(id, {
           protocolVersion: typeof requestedVersion === "string" ? requestedVersion : DEFAULT_PROTOCOL_VERSION,
           capabilities: { tools: {} },
-          serverInfo: { name: "ai-counselor-memory-bridge", version: "1.0.0" },
+          serverInfo: { name: "ai-counselor-memory-bridge", version: "2.0.0" },
         }),
       );
       return;

@@ -1,4 +1,5 @@
-import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
+import { hashPin, verifyPin, createLockoutTracker } from "./pinCrypto";
 
 /**
  * Gates access to a user's past conversations behind a PIN, separate from
@@ -7,25 +8,11 @@ import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypt
  * with SESSION_SECRET, so verification needs no server-side storage.
  */
 
-const SCRYPT_KEYLEN = 64;
+export { hashPin, verifyPin };
+
 const TOKEN_TTL_MS = 30 * 60 * 1000;
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_MS = 15 * 60 * 1000;
-
-export function hashPin(pin: string): string {
-  const salt = randomBytes(16);
-  const derived = scryptSync(pin, salt, SCRYPT_KEYLEN);
-  return `${salt.toString("hex")}:${derived.toString("hex")}`;
-}
-
-export function verifyPin(pin: string, stored: string): boolean {
-  const [saltHex, hashHex] = stored.split(":");
-  if (!saltHex || !hashHex) return false;
-  const salt = Buffer.from(saltHex, "hex");
-  const expected = Buffer.from(hashHex, "hex");
-  const actual = scryptSync(pin, salt, expected.length);
-  return actual.length === expected.length && timingSafeEqual(actual, expected);
-}
 
 function getSecret(): string {
   const secret = process.env.SESSION_SECRET;
@@ -70,31 +57,8 @@ export function verifyHistoryToken(token: string | undefined | null, userId: str
   );
 }
 
-// In-memory per-userId lockout for unlock attempts. Single-process only —
-// good enough for this deploy's scale; would need a shared store (e.g.
-// Redis) behind a multi-instance API server.
-const failedAttempts = new Map<string, { count: number; lockedUntil: number }>();
+const historyLockout = createLockoutTracker(MAX_FAILED_ATTEMPTS, LOCKOUT_MS);
 
-export function isHistoryLockedOut(userId: string): boolean {
-  const entry = failedAttempts.get(userId);
-  if (!entry?.lockedUntil) return false;
-  if (Date.now() >= entry.lockedUntil) {
-    failedAttempts.delete(userId);
-    return false;
-  }
-  return true;
-}
-
-export function recordFailedHistoryAttempt(userId: string): void {
-  const entry = failedAttempts.get(userId) ?? { count: 0, lockedUntil: 0 };
-  entry.count += 1;
-  if (entry.count >= MAX_FAILED_ATTEMPTS) {
-    entry.lockedUntil = Date.now() + LOCKOUT_MS;
-    entry.count = 0;
-  }
-  failedAttempts.set(userId, entry);
-}
-
-export function clearFailedHistoryAttempts(userId: string): void {
-  failedAttempts.delete(userId);
-}
+export const isHistoryLockedOut = historyLockout.isLockedOut;
+export const recordFailedHistoryAttempt = historyLockout.recordFailedAttempt;
+export const clearFailedHistoryAttempts = historyLockout.clearFailedAttempts;

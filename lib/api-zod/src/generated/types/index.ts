@@ -18,6 +18,8 @@ export * from './message';
 export * from './messageExchange';
 export * from './messageInput';
 export * from './messageRole';
+export * from './phoneAccessCodeInput';
+export * from './phoneAccessCodeRemovalInput';
 export * from './profile';
 export * from './profileUpdate';
 export * from './stats';

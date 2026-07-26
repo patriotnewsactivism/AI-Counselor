@@ -31,6 +31,8 @@ import type {
   Message,
   MessageExchange,
   MessageInput,
+  PhoneAccessCodeInput,
+  PhoneAccessCodeRemovalInput,
   Profile,
   ProfileUpdate,
   Stats,
@@ -1397,6 +1399,149 @@ export const useUnlockHistory = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getUnlockHistoryMutationOptions(options));
+    }
+
+export const getSetPhoneAccessCodeUrl = () => {
+
+
+
+
+  return `/api/phone-access/code`
+}
+
+/**
+ * If a code is already set, currentCode must be supplied and correct. This code is not used for anything inside the app — it exists purely so the phone-hosted xAI Voice Agent can tell which account a call belongs to, since a call has no Clerk session.
+ * @summary Set or change the 6-digit code that identifies this account on the phone line
+ */
+export const setPhoneAccessCode = async (phoneAccessCodeInput: PhoneAccessCodeInput, options?: RequestInit): Promise<Profile> => {
+
+  return customFetch<Profile>(getSetPhoneAccessCodeUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(phoneAccessCodeInput)
+  }
+);}
+
+
+
+
+
+export const getSetPhoneAccessCodeMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setPhoneAccessCode>>, TError,{data: BodyType<PhoneAccessCodeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setPhoneAccessCode>>, TError,{data: BodyType<PhoneAccessCodeInput>}, TContext> => {
+
+const mutationKey = ['setPhoneAccessCode'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setPhoneAccessCode>>, {data: BodyType<PhoneAccessCodeInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  setPhoneAccessCode(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetPhoneAccessCodeMutationResult = NonNullable<Awaited<ReturnType<typeof setPhoneAccessCode>>>
+    export type SetPhoneAccessCodeMutationBody = BodyType<PhoneAccessCodeInput>
+    export type SetPhoneAccessCodeMutationError = ErrorType<void>
+
+    /**
+ * @summary Set or change the 6-digit code that identifies this account on the phone line
+ */
+export const useSetPhoneAccessCode = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setPhoneAccessCode>>, TError,{data: BodyType<PhoneAccessCodeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof setPhoneAccessCode>>,
+        TError,
+        {data: BodyType<PhoneAccessCodeInput>},
+        TContext
+      > => {
+      return useMutation(getSetPhoneAccessCodeMutationOptions(options));
+    }
+
+export const getRemovePhoneAccessCodeUrl = () => {
+
+
+
+
+  return `/api/phone-access/code`
+}
+
+/**
+ * @summary Remove the phone access code, disabling phone-line identification for this account
+ */
+export const removePhoneAccessCode = async (phoneAccessCodeRemovalInput: PhoneAccessCodeRemovalInput, options?: RequestInit): Promise<Profile> => {
+
+  return customFetch<Profile>(getRemovePhoneAccessCodeUrl(),
+  {
+    ...options,
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(phoneAccessCodeRemovalInput)
+  }
+);}
+
+
+
+
+
+export const getRemovePhoneAccessCodeMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof removePhoneAccessCode>>, TError,{data: BodyType<PhoneAccessCodeRemovalInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof removePhoneAccessCode>>, TError,{data: BodyType<PhoneAccessCodeRemovalInput>}, TContext> => {
+
+const mutationKey = ['removePhoneAccessCode'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof removePhoneAccessCode>>, {data: BodyType<PhoneAccessCodeRemovalInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  removePhoneAccessCode(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RemovePhoneAccessCodeMutationResult = NonNullable<Awaited<ReturnType<typeof removePhoneAccessCode>>>
+    export type RemovePhoneAccessCodeMutationBody = BodyType<PhoneAccessCodeRemovalInput>
+    export type RemovePhoneAccessCodeMutationError = ErrorType<void>
+
+    /**
+ * @summary Remove the phone access code, disabling phone-line identification for this account
+ */
+export const useRemovePhoneAccessCode = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof removePhoneAccessCode>>, TError,{data: BodyType<PhoneAccessCodeRemovalInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof removePhoneAccessCode>>,
+        TError,
+        {data: BodyType<PhoneAccessCodeRemovalInput>},
+        TContext
+      > => {
+      return useMutation(getRemovePhoneAccessCodeMutationOptions(options));
     }
 
 export const getUpdateVoiceProfileUrl = (id: number,) => {

@@ -13,6 +13,12 @@ export interface Profile {
   companionName: string;
   /** True if a History PIN is configured, gating access to past conversations */
   historyPinEnabled: boolean;
+  /** True if a 6-digit phone access code is configured, letting the phone line identify this account */
+  phoneAccessCodeEnabled: boolean;
+  /** True if live voice (browser and phone) should wait for keywordWord instead of ending a turn on silence */
+  keywordModeEnabled: boolean;
+  /** The keyword that ends a turn when keywordModeEnabled is true */
+  keywordWord: string;
   createdAt: Date;
   updatedAt: Date;
 }

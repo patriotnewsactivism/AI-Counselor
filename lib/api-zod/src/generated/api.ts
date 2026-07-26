@@ -25,6 +25,9 @@ export const GetProfileResponse = zod.object({
   "preferredName": zod.string().nullish(),
   "companionName": zod.string(),
   "historyPinEnabled": zod.boolean().describe('True if a History PIN is configured, gating access to past conversations'),
+  "phoneAccessCodeEnabled": zod.boolean().describe('True if a 6-digit phone access code is configured, letting the phone line identify this account'),
+  "keywordModeEnabled": zod.boolean().describe('True if live voice (browser and phone) should wait for keywordWord instead of ending a turn on silence'),
+  "keywordWord": zod.string().describe('The keyword that ends a turn when keywordModeEnabled is true'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -34,11 +37,15 @@ export const GetProfileResponse = zod.object({
  * @summary Update the current user's profile
  */
 
+export const updateProfileBodyKeywordWordMax = 32;
+
 
 
 export const UpdateProfileBody = zod.object({
   "preferredName": zod.string().optional(),
-  "companionName": zod.string().min(1).optional()
+  "companionName": zod.string().min(1).optional(),
+  "keywordModeEnabled": zod.boolean().optional(),
+  "keywordWord": zod.string().min(1).max(updateProfileBodyKeywordWordMax).optional()
 })
 
 export const UpdateProfileResponse = zod.object({
@@ -46,6 +53,9 @@ export const UpdateProfileResponse = zod.object({
   "preferredName": zod.string().nullish(),
   "companionName": zod.string(),
   "historyPinEnabled": zod.boolean().describe('True if a History PIN is configured, gating access to past conversations'),
+  "phoneAccessCodeEnabled": zod.boolean().describe('True if a 6-digit phone access code is configured, letting the phone line identify this account'),
+  "keywordModeEnabled": zod.boolean().describe('True if live voice (browser and phone) should wait for keywordWord instead of ending a turn on silence'),
+  "keywordWord": zod.string().describe('The keyword that ends a turn when keywordModeEnabled is true'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -296,6 +306,51 @@ export const UnlockHistoryBody = zod.object({
 export const UnlockHistoryResponse = zod.object({
   "token": zod.string().describe('Opaque signed token — send as the X-History-Token header'),
   "expiresAt": zod.coerce.date()
+})
+
+
+/**
+ * If a code is already set, currentCode must be supplied and correct. This code is not used for anything inside the app — it exists purely so the phone-hosted xAI Voice Agent can tell which account a call belongs to, since a call has no Clerk session.
+ * @summary Set or change the 6-digit code that identifies this account on the phone line
+ */
+export const setPhoneAccessCodeBodyCodeRegExp = new RegExp('^[0-9]{6}$');
+
+
+export const SetPhoneAccessCodeBody = zod.object({
+  "code": zod.string().regex(setPhoneAccessCodeBodyCodeRegExp).describe('New 6-digit numeric phone access code'),
+  "currentCode": zod.string().optional().describe('Required (and must be correct) when a code is already set')
+})
+
+export const SetPhoneAccessCodeResponse = zod.object({
+  "userId": zod.string(),
+  "preferredName": zod.string().nullish(),
+  "companionName": zod.string(),
+  "historyPinEnabled": zod.boolean().describe('True if a History PIN is configured, gating access to past conversations'),
+  "phoneAccessCodeEnabled": zod.boolean().describe('True if a 6-digit phone access code is configured, letting the phone line identify this account'),
+  "keywordModeEnabled": zod.boolean().describe('True if live voice (browser and phone) should wait for keywordWord instead of ending a turn on silence'),
+  "keywordWord": zod.string().describe('The keyword that ends a turn when keywordModeEnabled is true'),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Remove the phone access code, disabling phone-line identification for this account
+ */
+export const RemovePhoneAccessCodeBody = zod.object({
+  "currentCode": zod.string()
+})
+
+export const RemovePhoneAccessCodeResponse = zod.object({
+  "userId": zod.string(),
+  "preferredName": zod.string().nullish(),
+  "companionName": zod.string(),
+  "historyPinEnabled": zod.boolean().describe('True if a History PIN is configured, gating access to past conversations'),
+  "phoneAccessCodeEnabled": zod.boolean().describe('True if a 6-digit phone access code is configured, letting the phone line identify this account'),
+  "keywordModeEnabled": zod.boolean().describe('True if live voice (browser and phone) should wait for keywordWord instead of ending a turn on silence'),
+  "keywordWord": zod.string().describe('The keyword that ends a turn when keywordModeEnabled is true'),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
 })
 
 
