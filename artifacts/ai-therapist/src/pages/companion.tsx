@@ -14,17 +14,17 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Loader2, User, Mic, Square } from "lucide-react";
+import { Loader2, User, Mic, Square, Download } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { getListMessagesQueryKey, getListConversationsQueryKey, getGetConversationQueryKey } from "@workspace/api-client-react";
 import { useToast } from "@/hooks/use-toast";
-
-const GROK_BETA_KEY = "ai-therapist:grokVoiceBeta";
+import { usePWAInstall } from "@/hooks/use-pwa-install";
 
 /** wss://<api host> derived from the same VITE_API_URL the rest of the app
  * uses for HTTP calls (see main.tsx). Empty in local dev, where Vite proxies
- * same-origin -- the beta toggle is hidden in that case since there's no
- * separate API origin to build a WS URL from. */
+ * same-origin — the Grok streaming pipeline isn't available in that case
+ * since there's no separate API origin to build a WS URL from. Falls back
+ * to the Web Speech API LiveConversation instead. */
 function deriveWsBaseUrl(): string | null {
   const apiUrl = import.meta.env.VITE_API_URL;
   if (!apiUrl) return null;
@@ -48,12 +48,10 @@ export default function CompanionPage() {
   const streamRecorderRef = useRef<VoiceStreamRecorderHandle>(null);
   const { getToken } = useAuth();
   const wsBaseUrl = deriveWsBaseUrl();
-  const [useGrokBeta, setUseGrokBeta] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return window.localStorage.getItem(GROK_BETA_KEY) === "1";
-  });
   const [streamState, setStreamState] = useState<StreamTurnState>("idle");
   const [streamTranscript, setStreamTranscript] = useState("");
+  const [streamError, setStreamError] = useState<string | null>(null);
+  const { canInstall, promptInstall } = usePWAInstall();
 
   const isNew = !id;
   const conversationId = isNew ? null : parseInt(id, 10);
@@ -77,10 +75,6 @@ export default function CompanionPage() {
     if (scrollRef.current) scrollRef.current.scrollIntoView({ behavior: "smooth" });
   }, [messages, isProcessing]);
 
-  useEffect(() => {
-    window.localStorage.setItem(GROK_BETA_KEY, useGrokBeta ? "1" : "0");
-  }, [useGrokBeta]);
-
   // Keep the ref in sync with the URL param so ensureConversation() returns
   // the existing conversation id instead of creating a new one on first turn.
   useEffect(() => {
@@ -100,13 +94,8 @@ export default function CompanionPage() {
 
     const creation = (async () => {
       const newConv = await createConv.mutateAsync({ data: { title: "New Conversation" } });
-      // Set synchronously, before the URL/route-param round-trip lands, so
-      // any turn that lands between now and the next render still resolves
-      // to this conversation instead of creating another one.
       conversationIdRef.current = newConv.id;
       queryClient.invalidateQueries({ queryKey: getListConversationsQueryKey() });
-      // Thanks to the single /companion/:id? route, this navigation updates the
-      // URL WITHOUT remounting the page — the live session keeps running.
       setLocation(`/companion/${newConv.id}`);
       return newConv.id;
     })();
@@ -139,6 +128,7 @@ export default function CompanionPage() {
 
   const startGrokStream = async () => {
     if (!wsBaseUrl) return;
+    setStreamError(null);
     setIsProcessing(true);
     try {
       const targetId = await ensureConversation();
@@ -146,8 +136,8 @@ export default function CompanionPage() {
       if (targetId == null) throw new Error("No conversation id");
       await streamRecorderRef.current?.start(targetId);
     } catch (error) {
-      console.error("Failed to start Grok voice stream", error);
-      toast({ title: "Couldn't start the beta voice stream", description: "Please try again.", variant: "destructive" });
+      console.error("Failed to start voice stream", error);
+      toast({ title: "Couldn't start the voice stream", description: "Please try again.", variant: "destructive" });
       setIsProcessing(false);
     }
   };
@@ -170,6 +160,8 @@ export default function CompanionPage() {
     );
   }
 
+  const grokAvailable = !!wsBaseUrl;
+
   return (
     <div className="h-full flex flex-col bg-background">
       <header className="p-4 border-b border-border/50 bg-background/50 backdrop-blur-sm sticky top-0 z-10 flex items-center gap-4 shrink-0">
@@ -178,8 +170,20 @@ export default function CompanionPage() {
         </Avatar>
         <div className="flex-1">
           <h2 className="font-serif text-lg font-medium leading-none text-foreground">{companionName}</h2>
-          <p className="text-xs text-muted-foreground mt-1">{isProcessing ? "Thinking…" : "Ready when you are"}</p>
+          <p className="text-xs text-muted-foreground mt-1">
+            {isProcessing ? "Thinking…" : streamState === "listening" ? "Listening…" : streamState === "speaking" ? "Speaking…" : "Ready when you are"}
+          </p>
         </div>
+        {canInstall && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5 shrink-0"
+            onClick={() => void promptInstall()}
+          >
+            <Download className="h-4 w-4" /> Install
+          </Button>
+        )}
       </header>
 
       <ScrollArea className="flex-1 p-4 md:p-8">
@@ -188,7 +192,9 @@ export default function CompanionPage() {
             <div className="flex flex-col items-center justify-center py-20 text-center gap-4 opacity-80">
               <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center mb-4"><span className="font-serif text-3xl text-primary">{companionName[0]}</span></div>
               <h3 className="font-serif text-2xl text-foreground">Good evening, {userName}</h3>
-              <p className="text-muted-foreground max-w-md">I’m here to listen. Tap the button below, set your phone down, and just talk. I’ll listen for each turn, respond, and listen again.</p>
+              <p className="text-muted-foreground max-w-md">
+                I'm here to listen. Tap the button below and just talk — say <span className="font-medium text-foreground">"{wakeWord}"</span> when you're done, and I'll respond. Say it again while I'm talking to cut me off.
+              </p>
             </div>
           ) : (
             messages.map((msg) => {
@@ -223,60 +229,60 @@ export default function CompanionPage() {
       </ScrollArea>
 
       <div className="p-4 md:p-6 bg-gradient-to-t from-background via-background to-transparent shrink-0 border-t border-border/10">
-        {wsBaseUrl && (
-          <div className="flex items-center justify-end gap-2 mb-2 text-xs text-muted-foreground">
-            <label htmlFor="grok-voice-beta" className="cursor-pointer select-none">
-              Grok voice (beta)
-            </label>
-            <input
-              id="grok-voice-beta"
-              type="checkbox"
-              className="accent-primary"
-              checked={useGrokBeta}
-              onChange={(event) => {
-                stopGrokStream();
-                setUseGrokBeta(event.target.checked);
-              }}
-            />
-          </div>
-        )}
-
-        {useGrokBeta && wsBaseUrl ? (
+        {grokAvailable ? (
           <div className="flex flex-col items-center gap-3">
             {streamTranscript && (
               <p className="text-sm text-muted-foreground text-center max-w-md">{streamTranscript}</p>
             )}
-            <Button
-              size="lg"
-              className="gap-2 rounded-full h-14 w-14 p-0"
-              variant={streamState === "idle" || streamState === "error" ? "default" : "outline"}
-              onClick={() => {
-                if (streamState === "idle" || streamState === "error") {
-                  void startGrokStream();
-                } else {
-                  stopGrokStream();
-                }
-              }}
-            >
-              {streamState === "connecting" ? (
-                <Loader2 className="h-5 w-5 animate-spin" />
-              ) : streamState === "idle" || streamState === "error" ? (
-                <Mic className="h-5 w-5" />
-              ) : (
-                <Square className="h-5 w-5" />
+            <div className="relative">
+              {streamState !== "idle" && streamState !== "error" && (
+                <>
+                  <div className="absolute inset-0 bg-primary/20 rounded-full scale-[2] animate-pulse pointer-events-none" />
+                  <div
+                    className="absolute inset-0 bg-primary/30 rounded-full scale-[1.5] animate-ping pointer-events-none"
+                    style={{ animationDuration: "1.5s" }}
+                  />
+                </>
               )}
-            </Button>
-            <p className="text-xs text-muted-foreground">
-              {streamState === "listening"
-                ? "Listening…"
-                : streamState === "speaking"
-                  ? `${companionName} is speaking…`
-                  : streamState === "connecting"
-                    ? "Connecting…"
-                    : streamState === "error"
-                      ? "Something went wrong — tap to retry"
-                      : "Tap to start a live conversation"}
-            </p>
+              <button
+                onClick={() => {
+                  if (streamState === "idle" || streamState === "error") {
+                    void startGrokStream();
+                  } else {
+                    stopGrokStream();
+                  }
+                }}
+                aria-label={streamState !== "idle" && streamState !== "error" ? "End conversation" : "Start conversation"}
+                className={cn(
+                  "relative z-10 flex items-center justify-center h-24 w-24 rounded-full transition-all duration-300 shadow-lg",
+                  streamState !== "idle" && streamState !== "error"
+                    ? "bg-destructive text-destructive-foreground scale-110"
+                    : "bg-primary text-primary-foreground hover:scale-105 hover:shadow-xl",
+                )}
+              >
+                {streamState === "connecting" ? (
+                  <Loader2 className="h-8 w-8 animate-spin" />
+                ) : streamState !== "idle" && streamState !== "error" ? (
+                  <Square className="h-8 w-8 fill-current" />
+                ) : (
+                  <Mic className="h-10 w-10" />
+                )}
+              </button>
+            </div>
+            <div className="flex flex-col items-center gap-2 text-center min-h-10">
+              <span className={cn("text-sm font-medium", streamState !== "idle" ? "text-primary" : "text-muted-foreground")}>
+                {streamState === "listening"
+                  ? `Listening… say "${wakeWord}" when you're done`
+                  : streamState === "speaking"
+                    ? `${companionName} is speaking…`
+                    : streamState === "connecting"
+                      ? "Connecting…"
+                      : streamState === "error"
+                        ? "Something went wrong — tap to retry"
+                        : "Tap to start talking"}
+              </span>
+              {streamError && <span className="max-w-sm text-xs text-destructive">{streamError}</span>}
+            </div>
             <VoiceStreamRecorder
               ref={streamRecorderRef}
               wsBaseUrl={wsBaseUrl}
@@ -287,7 +293,10 @@ export default function CompanionPage() {
               onAssistantDone={() => {
                 if (conversationId) queryClient.invalidateQueries({ queryKey: getListMessagesQueryKey(conversationId) });
               }}
-              onError={(message) => toast({ title: "Voice stream error", description: message, variant: "destructive" })}
+              onError={(message) => {
+                setStreamError(message);
+                toast({ title: "Voice stream error", description: message, variant: "destructive" });
+              }}
             />
           </div>
         ) : (
