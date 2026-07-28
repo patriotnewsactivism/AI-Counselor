@@ -17,26 +17,13 @@ import { findOwnedConversation } from "./shared";
 import { logger } from "../../lib/logger";
 
 /**
- * NEW streaming voice pipeline (Grok STT/TTS), built ALONGSIDE the existing
- * one-shot HTTP `/conversations/:id/voice-messages` route -- nothing old has
- * been removed or rewired yet. This is the "Path A" replacement: it keeps
- * the exact same companion logic (getOrCreateProfile -> identifyOrEnrollSpeaker
- * -> runCompanionExchangePipelined), it just swaps the transport from
- * "upload one full blob, wait for one full reply blob" to a persistent
- * WebSocket that streams mic audio in and TTS audio out sentence-by-sentence.
+ * Streaming voice pipeline (Grok STT/TTS) over a persistent WebSocket.
  *
- * NOT YET LIVE-VERIFIED end-to-end with a real audio client -- do that
- * before cutting traffic over or deleting lib/deepgram.
- *
- * Protocol (server -> client JSON control frames, audio as binary frames):
- *   {type:"transcript", text, isFinal}      -- live STT transcript
- *   {type:"assistant-sentence", text}       -- about to stream audio for this sentence
- *   <binary audio frame(s), audio/mpeg>
- *   {type:"assistant-done"}                 -- reply finished
- *   {type:"error", message}
- * Client -> server:
- *   <binary PCM16LE audio frames>            -- mic audio, 16kHz mono
- *   {type:"barge-in"}                        -- stop current playback/synthesis
+ * Turn-taking: the mic keeps listening through pauses. Final STT segments
+ * are accumulated until the wake word (default "over") is detected as a
+ * sign-off at the end of the accumulated text. Only then is the combined
+ * transcript sent to the companion exchange as one turn — preventing
+ * fragmented responses to individual phrases.
  */
 
 const WS_PATH = "/ws/voice-stream";
@@ -54,7 +41,7 @@ export function handleVoiceStreamUpgrade(
   head: Buffer,
 ): void {
   const url = new URL(req.url ?? "", "http://internal");
-  if (url.pathname !== WS_PATH) return; // let other upgrade handlers (if any) deal with it
+  if (url.pathname !== WS_PATH) return;
 
   const conversationIdRaw = url.searchParams.get("conversationId");
   const conversationId = conversationIdRaw ? Number(conversationIdRaw) : NaN;
@@ -64,32 +51,15 @@ export function handleVoiceStreamUpgrade(
     return;
   }
 
-  // Cross-origin gotcha: the frontend (Vercel) and this API (Railway) are
-  // different origins, and the frontend authenticates via a Clerk Bearer
-  // token (session.getToken()), not cookies. Native browser WebSocket()
-  // cannot send custom headers on the handshake, so the client must instead
-  // pass the token as a query param -- inject it as a real Authorization
-  // header on the raw request before running Clerk's normal verification,
-  // so getAuth() below works exactly like it does for every HTTP route.
   const token = url.searchParams.get("token");
   if (token) {
     req.headers.authorization = `Bearer ${token}`;
   }
 
-  // Clerk's auth normally runs as Express middleware on a real req/res cycle.
-  // At the raw HTTP-upgrade stage there is no Express response object yet,
-  // so we run clerkMiddleware() manually against this IncomingMessage with a
-  // minimal stub Response, then read the result via getAuth().
   const stubRes = {
-    setHeader() {
-      return stubRes;
-    },
-    getHeader() {
-      return undefined;
-    },
-    writeHead() {
-      return stubRes;
-    },
+    setHeader() { return stubRes; },
+    getHeader() { return undefined; },
+    writeHead() { return stubRes; },
     end() {},
   } as unknown as Response;
 
@@ -120,6 +90,17 @@ wss.on("connection", (ws: WebSocket, _req: IncomingMessage, ctx: ConnCtx) => {
   });
 });
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function splitOnTriggerWord(text: string, trigger: string): string | null {
+  if (!trigger) return null;
+  const match = new RegExp(`\\b${escapeRegExp(trigger)}\\b[.,!?]*\\s*$`, "i").exec(text);
+  if (!match) return null;
+  return text.slice(0, match.index).trim();
+}
+
 async function runVoiceStreamConnection(ws: WebSocket, ctx: ConnCtx): Promise<void> {
   const { userId, conversationId } = ctx;
 
@@ -131,21 +112,37 @@ async function runVoiceStreamConnection(ws: WebSocket, ctx: ConnCtx): Promise<vo
   }
 
   const profile = await getOrCreateProfile(userId);
+  const wakeWord = (profile.wakeWord?.trim() || "over").trim().toLowerCase();
 
-  // Accumulate raw PCM for the CURRENT utterance so identifyOrEnrollSpeaker
-  // still gets one full clip per turn, exactly like the old HTTP route --
-  // speaker-ID logic itself is completely unchanged.
   let utteranceChunks: Buffer[] = [];
+  let pendingTranscript = "";
   let bargeIn = false;
+  let responding = false;
 
   const stt = new GrokTranscriptionStream({
     sampleRate: 16000,
     onTranscript: (event: GrokTranscriptEvent) => {
       ws.send(JSON.stringify({ type: "transcript", text: event.text, isFinal: event.isFinal }));
       if (event.isFinal && event.text.trim().length > 0) {
-        const audioBuffer = Buffer.concat(utteranceChunks);
-        utteranceChunks = [];
-        void handleFinalTranscript(event.text.trim(), audioBuffer);
+        const segment = event.text.trim();
+        const combined = pendingTranscript
+          ? `${pendingTranscript} ${segment}`.trim()
+          : segment;
+
+        const said = splitOnTriggerWord(combined, wakeWord);
+        if (said !== null) {
+          // Wake word detected — end the turn with the accumulated text.
+          pendingTranscript = "";
+          const audioBuffer = Buffer.concat(utteranceChunks);
+          utteranceChunks = [];
+          if (said) {
+            void handleTurnComplete(said, audioBuffer);
+          }
+          // If said is empty (just "over" with nothing before it), keep listening.
+        } else {
+          // No wake word yet — accumulate and keep listening.
+          pendingTranscript = combined;
+        }
       }
     },
     onError: (err: Error) => {
@@ -157,7 +154,9 @@ async function runVoiceStreamConnection(ws: WebSocket, ctx: ConnCtx): Promise<vo
     },
   });
 
-  async function handleFinalTranscript(transcript: string, audioBuffer: Buffer): Promise<void> {
+  async function handleTurnComplete(transcript: string, audioBuffer: Buffer): Promise<void> {
+    if (responding) return;
+    responding = true;
     bargeIn = false;
 
     let speakerName: string | null = null;
@@ -185,9 +184,7 @@ async function runVoiceStreamConnection(ws: WebSocket, ctx: ConnCtx): Promise<vo
           .set({ lastHeardAt: new Date() })
           .where(eq(voiceProfilesTable.id, result.matchedProfileId))
           .execute()
-          .catch(() => {
-            /* non-critical */
-          });
+          .catch(() => { /* non-critical */ });
       } else if (result.introducedName) {
         speakerName = result.introducedName;
       }
@@ -203,7 +200,7 @@ async function runVoiceStreamConnection(ws: WebSocket, ctx: ConnCtx): Promise<vo
         speakerName,
       },
       (sentence: string) => {
-        if (bargeIn) return; // client interrupted -- stop emitting further sentences
+        if (bargeIn) return;
         void (async () => {
           try {
             ws.send(JSON.stringify({ type: "assistant-sentence", text: sentence }));
@@ -217,6 +214,7 @@ async function runVoiceStreamConnection(ws: WebSocket, ctx: ConnCtx): Promise<vo
     );
 
     if (!bargeIn) ws.send(JSON.stringify({ type: "assistant-done" }));
+    responding = false;
   }
 
   ws.on("message", (data: WebSocket.RawData, isBinary: boolean) => {
@@ -228,7 +226,10 @@ async function runVoiceStreamConnection(ws: WebSocket, ctx: ConnCtx): Promise<vo
     }
     try {
       const msg = JSON.parse(data.toString());
-      if (msg.type === "barge-in") bargeIn = true;
+      if (msg.type === "barge-in") {
+        bargeIn = true;
+        pendingTranscript = "";
+      }
     } catch {
       /* ignore malformed control frames */
     }
