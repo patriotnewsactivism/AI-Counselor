@@ -5,10 +5,6 @@ node_modules/
 # Build artifacts
 dist/
 build/
-*.js
-*.ts
-*.tsx
-*.jsx
 
 # Environment variables
 .env
