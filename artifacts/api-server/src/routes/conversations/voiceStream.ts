@@ -19,27 +19,20 @@ import { logger } from "../../lib/logger";
 /**
  * Streaming voice pipeline (Grok STT/TTS) over a persistent WebSocket.
  *
- * Turn-taking: the mic keeps listening through pauses. Final STT segments
- * are accumulated until the wake word (default "over") is detected as a
- * sign-off at the end of the accumulated text. Only then is the combined
- * transcript sent to the companion exchange as one turn — preventing
- * fragmented responses to individual phrases.
+ * Turn-taking depends on the caller's profile setting:
+ * - Wake-word mode (wakeWordEnabled=true, default): final STT segments are
+ *   accumulated until the wake word (default "over") is detected as a
+ *   sign-off. Only then is the combined transcript sent as one turn.
+ * - Normal mode (wakeWordEnabled=false): each final STT segment (i.e. each
+ *   ~300ms pause) is treated as a complete turn and sent immediately.
  */
 
 const WS_PATH = "/ws/voice-stream";
-
 const wss = new WebSocketServer({ noServer: true });
 
-interface ConnCtx {
-  userId: string;
-  conversationId: number;
-}
+interface ConnCtx { userId: string; conversationId: number }
 
-export function handleVoiceStreamUpgrade(
-  req: IncomingMessage,
-  socket: Duplex,
-  head: Buffer,
-): void {
+export function handleVoiceStreamUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
   const url = new URL(req.url ?? "", "http://internal");
   if (url.pathname !== WS_PATH) return;
 
@@ -52,9 +45,7 @@ export function handleVoiceStreamUpgrade(
   }
 
   const token = url.searchParams.get("token");
-  if (token) {
-    req.headers.authorization = `Bearer ${token}`;
-  }
+  if (token) { req.headers.authorization = `Bearer ${token}`; }
 
   const stubRes = {
     setHeader() { return stubRes; },
@@ -66,11 +57,7 @@ export function handleVoiceStreamUpgrade(
   clerkMiddleware()(req as unknown as Request, stubRes, () => {
     const auth = getAuth(req as unknown as Request);
     const userId = auth?.userId;
-    if (!userId) {
-      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
-      socket.destroy();
-      return;
-    }
+    if (!userId) { socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n"); socket.destroy(); return; }
 
     wss.handleUpgrade(req, socket, head, (ws) => {
       wss.emit("connection", ws, req, { userId, conversationId } satisfies ConnCtx);
@@ -81,11 +68,7 @@ export function handleVoiceStreamUpgrade(
 wss.on("connection", (ws: WebSocket, _req: IncomingMessage, ctx: ConnCtx) => {
   void runVoiceStreamConnection(ws, ctx).catch((err) => {
     logger.error({ err }, "voice-stream connection failed");
-    try {
-      ws.send(JSON.stringify({ type: "error", message: "Internal error" }));
-    } catch {
-      /* socket likely already closed */
-    }
+    try { ws.send(JSON.stringify({ type: "error", message: "Internal error" })); } catch { /* socket closed */ }
     ws.close();
   });
 });
@@ -112,6 +95,7 @@ async function runVoiceStreamConnection(ws: WebSocket, ctx: ConnCtx): Promise<vo
   }
 
   const profile = await getOrCreateProfile(userId);
+  const wakeWordEnabled = profile.wakeWordEnabled ?? true;
   const wakeWord = (profile.wakeWord?.trim() || "over").trim().toLowerCase();
 
   let utteranceChunks: Buffer[] = [];
@@ -125,22 +109,27 @@ async function runVoiceStreamConnection(ws: WebSocket, ctx: ConnCtx): Promise<vo
       ws.send(JSON.stringify({ type: "transcript", text: event.text, isFinal: event.isFinal }));
       if (event.isFinal && event.text.trim().length > 0) {
         const segment = event.text.trim();
+
+        if (!wakeWordEnabled) {
+          // Normal mode: each final segment is its own turn.
+          const audioBuffer = Buffer.concat(utteranceChunks);
+          utteranceChunks = [];
+          void handleTurnComplete(segment, audioBuffer);
+          return;
+        }
+
+        // Wake-word mode: accumulate until the sign-off word.
         const combined = pendingTranscript
           ? `${pendingTranscript} ${segment}`.trim()
           : segment;
 
         const said = splitOnTriggerWord(combined, wakeWord);
         if (said !== null) {
-          // Wake word detected — end the turn with the accumulated text.
           pendingTranscript = "";
           const audioBuffer = Buffer.concat(utteranceChunks);
           utteranceChunks = [];
-          if (said) {
-            void handleTurnComplete(said, audioBuffer);
-          }
-          // If said is empty (just "over" with nothing before it), keep listening.
+          if (said) { void handleTurnComplete(said, audioBuffer); }
         } else {
-          // No wake word yet — accumulate and keep listening.
           pendingTranscript = combined;
         }
       }
@@ -149,9 +138,7 @@ async function runVoiceStreamConnection(ws: WebSocket, ctx: ConnCtx): Promise<vo
       logger.warn({ err }, "Grok STT stream error");
       ws.send(JSON.stringify({ type: "error", message: "Speech recognition error" }));
     },
-    onClose: () => {
-      /* xAI-side socket closed; client socket lifecycle is independent */
-    },
+    onClose: () => { /* xAI-side socket closed; client lifecycle independent */ },
   });
 
   async function handleTurnComplete(transcript: string, audioBuffer: Buffer): Promise<void> {
@@ -162,12 +149,7 @@ async function runVoiceStreamConnection(ws: WebSocket, ctx: ConnCtx): Promise<vo
     let speakerName: string | null = null;
     try {
       const enrolledProfiles = await db
-        .select({
-          id: voiceProfilesTable.id,
-          name: voiceProfilesTable.name,
-          sampleAudio: voiceProfilesTable.sampleAudio,
-          sampleMimeType: voiceProfilesTable.sampleMimeType,
-        })
+        .select({ id: voiceProfilesTable.id, name: voiceProfilesTable.name, sampleAudio: voiceProfilesTable.sampleAudio, sampleMimeType: voiceProfilesTable.sampleMimeType })
         .from(voiceProfilesTable)
         .where(eq(voiceProfilesTable.userId, userId));
 
@@ -193,12 +175,7 @@ async function runVoiceStreamConnection(ws: WebSocket, ctx: ConnCtx): Promise<vo
     }
 
     await runCompanionExchangePipelined(
-      {
-        conversationId,
-        profile,
-        userContent: transcript,
-        speakerName,
-      },
+      { conversationId, profile, userContent: transcript, speakerName },
       (sentence: string) => {
         if (bargeIn) return;
         void (async () => {
@@ -226,16 +203,9 @@ async function runVoiceStreamConnection(ws: WebSocket, ctx: ConnCtx): Promise<vo
     }
     try {
       const msg = JSON.parse(data.toString());
-      if (msg.type === "barge-in") {
-        bargeIn = true;
-        pendingTranscript = "";
-      }
-    } catch {
-      /* ignore malformed control frames */
-    }
+      if (msg.type === "barge-in") { bargeIn = true; pendingTranscript = ""; }
+    } catch { /* ignore malformed control frames */ }
   });
 
-  ws.on("close", () => {
-    stt.close();
-  });
+  ws.on("close", () => { stt.close(); });
 }

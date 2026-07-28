@@ -1,22 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import { 
-  useGetProfile, 
-  useUpdateProfile, 
-  useGetStats,
-  getGetProfileQueryKey
-} from "@workspace/api-client-react";
+import { useGetProfile, useUpdateProfile, useGetStats, getGetProfileQueryKey } from "@workspace/api-client-react";
 import { format } from "date-fns";
 import { Settings, Save, User, MessageSquare, BookHeart, Calendar, Mic } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { useQueryClient } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { VoiceProfilesSection } from "@/components/settings/voice-profiles";
 import { HistoryPinSection } from "@/components/settings/history-pin";
 import { PhoneAccessCodeSection } from "@/components/settings/phone-access-code";
-import { CallPreferencesSection } from "@/components/settings/call-preferences";
 
 export default function SettingsPage() {
   const { data: profile, isLoading: isLoadingProfile } = useGetProfile();
@@ -27,6 +22,7 @@ export default function SettingsPage() {
 
   const [preferredName, setPreferredName] = useState("");
   const [companionName, setCompanionName] = useState("");
+  const [wakeWordEnabled, setWakeWordEnabled] = useState(true);
   const [wakeWord, setWakeWord] = useState("");
 
   const initialized = useRef(false);
@@ -35,6 +31,7 @@ export default function SettingsPage() {
     if (profile && !initialized.current) {
       setPreferredName(profile.preferredName || "");
       setCompanionName(profile.companionName || "Aura");
+      setWakeWordEnabled(profile.wakeWordEnabled ?? true);
       setWakeWord(profile.wakeWord || "");
       initialized.current = true;
     }
@@ -47,6 +44,7 @@ export default function SettingsPage() {
         data: {
           preferredName: preferredName.trim() || undefined,
           companionName: companionName.trim() || "Aura",
+          wakeWordEnabled,
           wakeWord: wakeWord.trim() || undefined
         }
       });
@@ -80,7 +78,7 @@ export default function SettingsPage() {
 
       <div className="flex-1 overflow-y-auto p-6">
         <div className="max-w-3xl mx-auto flex flex-col gap-8 pb-12">
-          
+
           {/* Profile Settings */}
           <section>
             <h2 className="font-serif text-xl text-foreground mb-4">Preferences</h2>
@@ -94,7 +92,7 @@ export default function SettingsPage() {
                 <form onSubmit={handleSave} className="space-y-6">
                   <div className="space-y-2">
                     <Label htmlFor="preferredName">What should your companion call you?</Label>
-                    <Input 
+                    <Input
                       id="preferredName"
                       value={preferredName}
                       onChange={(e) => setPreferredName(e.target.value)}
@@ -103,7 +101,7 @@ export default function SettingsPage() {
                     />
                     <p className="text-xs text-muted-foreground">Leave blank to use your account default.</p>
                   </div>
-                  
+
                   <div className="space-y-2">
                     <Label htmlFor="companionName">Companion's Name</Label>
                     <Input
@@ -115,19 +113,36 @@ export default function SettingsPage() {
                     />
                   </div>
 
-                  <div className="space-y-2">
-                    <Label htmlFor="wakeWord">Sign-off word</Label>
-                    <Input
-                      id="wakeWord"
-                      value={wakeWord}
-                      onChange={(e) => setWakeWord(e.target.value)}
-                      placeholder="e.g. over"
-                      maxLength={32}
-                      className="max-w-md bg-background"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Like radio protocol: keep talking through pauses and multiple sentences — I'll only reply once you end with "{wakeWord.trim() || "over"}".
-                    </p>
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between max-w-md">
+                      <div>
+                        <Label htmlFor="wakeWordEnabled">Wait for sign-off word before replying</Label>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          Keep listening through pauses — only reply when you say the sign-off word.
+                        </p>
+                      </div>
+                      <Switch
+                        id="wakeWordEnabled"
+                        checked={wakeWordEnabled}
+                        onCheckedChange={setWakeWordEnabled}
+                      />
+                    </div>
+                    {wakeWordEnabled && (
+                      <div className="space-y-2">
+                        <Label htmlFor="wakeWord">Sign-off word</Label>
+                        <Input
+                          id="wakeWord"
+                          value={wakeWord}
+                          onChange={(e) => setWakeWord(e.target.value)}
+                          placeholder="e.g. over"
+                          maxLength={32}
+                          className="max-w-md bg-background"
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Like radio protocol: keep talking through pauses and multiple sentences — I'll only reply once you end with "{wakeWord.trim() || "over"}".
+                        </p>
+                      </div>
+                    )}
                   </div>
 
                   <Button type="submit" disabled={updateProfile.isPending} className="bg-primary text-primary-foreground hover:opacity-90">
@@ -141,34 +156,34 @@ export default function SettingsPage() {
           {/* Stats */}
           <section>
             <h2 className="font-serif text-xl text-foreground mb-4">Your Journey</h2>
-            
+
             {isLoadingStats ? (
               <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                 {[1,2,3,4,5].map(i => <Skeleton key={i} className="h-24 rounded-2xl" />)}
               </div>
             ) : stats ? (
               <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                <StatCard 
+                <StatCard
                   icon={<MessageSquare className="h-5 w-5 text-primary" />}
                   label="Conversations"
                   value={stats.conversationCount.toString()}
                 />
-                <StatCard 
+                <StatCard
                   icon={<MessageSquare className="h-5 w-5 text-primary" />}
                   label="Messages"
                   value={stats.messageCount.toString()}
                 />
-                <StatCard 
+                <StatCard
                   icon={<BookHeart className="h-5 w-5 text-primary" />}
                   label="Memories"
                   value={stats.memoryCount.toString()}
                 />
-                <StatCard 
+                <StatCard
                   icon={<Mic className="h-5 w-5 text-primary" />}
                   label="Voices"
                   value={stats.voiceProfileCount.toString()}
                 />
-                <StatCard 
+                <StatCard
                   icon={<Calendar className="h-5 w-5 text-primary" />}
                   label="Last Active"
                   value={stats.lastActiveAt ? format(new Date(stats.lastActiveAt), "MMM d") : "Never"}
@@ -180,8 +195,6 @@ export default function SettingsPage() {
           <VoiceProfilesSection />
 
           <PhoneAccessCodeSection />
-
-          <CallPreferencesSection />
 
           <HistoryPinSection />
 

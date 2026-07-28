@@ -69,6 +69,7 @@ export default function CompanionPage() {
 
   const companionName = profile?.companionName || "Aura";
   const userName = profile?.preferredName || "You";
+  const wakeWordEnabled = profile?.wakeWordEnabled ?? true;
   const wakeWord = (profile?.wakeWord?.trim() || "over").trim();
 
   useEffect(() => {
@@ -272,7 +273,9 @@ export default function CompanionPage() {
             <div className="flex flex-col items-center gap-2 text-center min-h-10">
               <span className={cn("text-sm font-medium", streamState !== "idle" ? "text-primary" : "text-muted-foreground")}>
                 {streamState === "listening"
-                  ? `Listening… say "${wakeWord}" when you're done`
+                  ? wakeWordEnabled
+                    ? `Listening… say "${wakeWord}" when you're done`
+                    : "Listening… speak naturally"
                   : streamState === "speaking"
                     ? `${companionName} is speaking…`
                     : streamState === "connecting"
@@ -303,6 +306,7 @@ export default function CompanionPage() {
           <LiveConversation
             onSendTurn={sendConversationTurn}
             companionName={companionName}
+            wakeWordEnabled={wakeWordEnabled}
             wakeWord={wakeWord}
           />
         )}
