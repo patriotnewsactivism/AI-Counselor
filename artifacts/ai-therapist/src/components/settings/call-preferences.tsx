@@ -21,20 +21,20 @@ export function CallPreferencesSection() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
-  const [keywordModeEnabled, setKeywordModeEnabled] = useState(false);
-  const [keywordWord, setKeywordWord] = useState("over");
+  const [wakeWordEnabled, setWakeWordEnabled] = useState(false);
+  const [wakeWord, setWakeWord] = useState("over");
   const initialized = useRef(false);
   const saveTimer = useRef<number | null>(null);
 
   useEffect(() => {
     if (profile && !initialized.current) {
-      setKeywordModeEnabled(profile.keywordModeEnabled);
-      setKeywordWord(profile.keywordWord || "over");
+      setWakeWordEnabled(profile.wakeWordEnabled);
+      setWakeWord(profile.wakeWord || "over");
       initialized.current = true;
     }
   }, [profile]);
 
-  const save = (next: { keywordModeEnabled: boolean; keywordWord: string }) => {
+  const save = (next: { wakeWordEnabled: boolean; wakeWord: string }) => {
     updateProfile.mutate(
       { data: next },
       {
@@ -45,15 +45,15 @@ export function CallPreferencesSection() {
   };
 
   const handleToggle = (checked: boolean) => {
-    setKeywordModeEnabled(checked);
-    save({ keywordModeEnabled: checked, keywordWord });
+    setWakeWordEnabled(checked);
+    save({ wakeWordEnabled: checked, wakeWord });
   };
 
   const handleWordChange = (value: string) => {
-    setKeywordWord(value);
+    setWakeWord(value);
     if (saveTimer.current !== null) window.clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(() => {
-      save({ keywordModeEnabled, keywordWord: value.trim() || "over" });
+      save({ wakeWordEnabled, wakeWord: value.trim() || "over" });
     }, 600);
   };
 
@@ -75,7 +75,7 @@ export function CallPreferencesSection() {
           <div className="flex items-center gap-3">
             <Ear className="h-5 w-5 text-primary shrink-0" />
             <div>
-              <p className="text-sm font-medium text-foreground">Wait for a keyword before responding</p>
+              <p className="text-sm font-medium text-foreground">Wait for a sign-off word before responding</p>
               <p className="text-xs text-muted-foreground mt-0.5">
                 Keeps listening through pauses instead of replying on the first silence.
               </p>
@@ -84,17 +84,17 @@ export function CallPreferencesSection() {
           <input
             type="checkbox"
             className="accent-primary h-4 w-4 shrink-0"
-            checked={keywordModeEnabled}
+            checked={wakeWordEnabled}
             onChange={(event) => handleToggle(event.target.checked)}
             disabled={updateProfile.isPending}
           />
         </label>
-        {keywordModeEnabled && (
+        {wakeWordEnabled && (
           <div className="space-y-2 pl-8">
-            <Label htmlFor="call-keyword">Keyword</Label>
+            <Label htmlFor="call-keyword">Sign-off word</Label>
             <Input
               id="call-keyword"
-              value={keywordWord}
+              value={wakeWord}
               onChange={(event) => handleWordChange(event.target.value)}
               placeholder="over"
               maxLength={32}

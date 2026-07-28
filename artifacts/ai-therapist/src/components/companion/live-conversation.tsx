@@ -5,21 +5,21 @@ import { cn } from "@/lib/utils";
 
 /**
  * Live conversation component rebuilt from scratch for reliability.
- * 
+ *
  * Architecture: Simple state machine with mutually exclusive states.
  * - IDLE: Ready to start
  * - LISTENING: Mic active, waiting for speech
  * - THINKING: Sent to AI, waiting for response
  * - SPEAKING: Playing AI response
- * 
- * Optional keyword activation: If a keyword is set, the counselor will only
- * respond when that keyword is spoken. Otherwise works like a normal phone call.
+ *
+ * Wake-word (sign-off) mode: when wakeWordEnabled is true, the mic keeps
+ * transcribing through pauses and multiple sentences without replying — a
+ * turn is only sent once `wakeWord` is spoken as a sign-off (e.g. "over"),
+ * and saying it again while she's speaking interrupts her (barge-in).
  */
 
 type Phase = "idle" | "listening" | "thinking" | "speaking";
 
-<<<<<<< Updated upstream
-=======
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -38,7 +38,6 @@ function splitOnTriggerWord(text: string, trigger: string): string | null {
 
 // Minimal Web Speech API typings — these interfaces are not present in every
 // TS DOM lib version, so we describe just the surface we use.
->>>>>>> Stashed changes
 interface SpeechAlternativeLike {
   transcript: string;
 }
@@ -87,12 +86,6 @@ function speechSupported(): boolean {
 interface LiveConversationProps {
   onSendTurn: (text: string) => Promise<string>;
   companionName: string;
-<<<<<<< Updated upstream
-  keyword?: string; // Optional keyword that must be said to trigger response
-}
-
-export function LiveConversation({ onSendTurn, companionName, keyword }: LiveConversationProps) {
-=======
   /** When true, the mic keeps transcribing through pauses and multiple
    *  sentences without replying — a turn is only sent once `wakeWord` is
    *  said as a sign-off (e.g. "over"), and saying it again while she's
@@ -107,20 +100,19 @@ export function LiveConversation({
   wakeWordEnabled,
   wakeWord,
 }: LiveConversationProps) {
->>>>>>> Stashed changes
   const [phase, setPhase] = useState<Phase>("idle");
   const [error, setError] = useState<string | null>(null);
   const [partial, setPartial] = useState("");
   const [textMode, setTextMode] = useState(false);
   const [text, setText] = useState("");
   const [supported] = useState<boolean>(() => speechSupported());
-  const [keywordDetected, setKeywordDetected] = useState(false); // Track if keyword was said in current turn
 
   const phaseRef = useRef<Phase>("idle");
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const voicesRef = useRef<SpeechSynthesisVoice[]>([]);
-  const isListeningRef = useRef(false);
-  const keywordRef = useRef(false); // Track keyword detection within current utterance
+  const activeRef = useRef(false);
+  const busyRef = useRef(false);
+  const restartTimerRef = useRef<number | null>(null);
 
   const wakeWordEnabledRef = useRef(false);
   const wakeWordRef = useRef("");
@@ -168,8 +160,6 @@ export function LiveConversation({
     return warm ?? pool[0];
   };
 
-<<<<<<< Updated upstream
-=======
   const clearRestartTimer = () => {
     if (restartTimerRef.current !== null) {
       window.clearTimeout(restartTimerRef.current);
@@ -185,6 +175,7 @@ export function LiveConversation({
     }, delay);
   };
 
+  // ── Main listening recognition ──────────────────────────────────────────
   const startRecognition = () => {
     if (!activeRef.current || busyRef.current || recognitionRef.current || wakeRecognitionRef.current) return;
     const Ctor = getRecognitionCtor();
@@ -297,6 +288,7 @@ export function LiveConversation({
     }
   };
 
+  // ── Wake-word barge-in recognition (only during speaking) ───────────────
   const clearWakeRestartTimer = () => {
     if (wakeRestartTimerRef.current !== null) {
       window.clearTimeout(wakeRestartTimerRef.current);
@@ -387,7 +379,7 @@ export function LiveConversation({
     }
   };
 
->>>>>>> Stashed changes
+  // ── Speech synthesis ────────────────────────────────────────────────────
   const speak = (toSpeak: string): Promise<void> =>
     new Promise((resolve) => {
       if (!toSpeak || typeof window === "undefined" || !("speechSynthesis" in window)) {
@@ -399,6 +391,7 @@ export function LiveConversation({
       } catch {
         /* ignore */
       }
+      busyRef.current = true;
       updatePhase("speaking");
       if (wakeWordEnabledRef.current) startWakeRecognition(); // arm barge-in-by-wake-word
       const utterance = new SpeechSynthesisUtterance(toSpeak);
@@ -411,7 +404,10 @@ export function LiveConversation({
       const finish = () => {
         if (settled) return;
         settled = true;
+        busyRef.current = false;
+        stopWakeRecognition();
         updatePhase("listening");
+        if (activeRef.current) scheduleRestart(150);
         resolve();
       };
       utterance.onend = finish;
@@ -423,135 +419,38 @@ export function LiveConversation({
       }
     });
 
-  const stopRecognition = () => {
+  // ── Turn handling ───────────────────────────────────────────────────────
+  const handleUtterance = async (said: string) => {
+    // Stop any in-flight listening recognition.
     const recognition = recognitionRef.current;
     recognitionRef.current = null;
-    isListeningRef.current = false;
     if (recognition) {
       try {
         recognition.onend = null;
-        recognition.onresult = null;
-        recognition.onerror = null;
-        recognition.stop();
+        recognition.abort();
       } catch {
         /* already stopped */
       }
     }
-  };
-
-  const startRecognition = () => {
-    if (isListeningRef.current || recognitionRef.current) return;
-    
-    const Ctor = getRecognitionCtor();
-    if (!Ctor) return;
-
-    const recognition = new Ctor();
-    recognition.continuous = false;
-    recognition.interimResults = true;
-    recognition.lang = "en-US";
-    recognition.maxAlternatives = 1;
-
-    let finalText = "";
-
-    recognition.onstart = () => {
-      isListeningRef.current = true;
-      keywordRef.current = false; // Reset keyword detection for new utterance
-      if (phaseRef.current === "idle" || phaseRef.current === "listening") {
-        updatePhase("listening");
-      }
-    };
-
-    recognition.onresult = (event) => {
-      let interim = "";
-      for (let index = event.resultIndex; index < event.results.length; index += 1) {
-        const result = event.results[index];
-        const transcript = result?.[0]?.transcript ?? "";
-        if (result?.isFinal) {
-          finalText += transcript;
-        } else {
-          interim += transcript;
-        }
-      }
-
-      const combined = `${finalText} ${interim}`.trim();
-      setPartial(combined);
-      
-      // Check for keyword if one is set
-      if (keyword && combined.toLowerCase().includes(keyword.toLowerCase())) {
-        keywordRef.current = true;
-        setKeywordDetected(true);
-      }
-    };
-
-    recognition.onerror = (event) => {
-      const errorKind = event.error;
-      if (errorKind === "not-allowed") {
-        setError("Microphone access denied. Please enable mic permission and try again.");
-        stopRecognition();
-        updatePhase("idle");
-        return;
-      }
-      if (errorKind === "service-not-allowed") {
-        setError("Speech service unavailable. Try Chrome or use keyboard input.");
-        stopRecognition();
-        updatePhase("idle");
-        return;
-      }
-      // For other errors (no-speech, network, etc.), just end quietly
-      // The user can tap again if needed
-    };
-
-    recognition.onend = () => {
-      recognitionRef.current = null;
-      isListeningRef.current = false;
-      
-      const said = finalText.trim();
-      setPartial("");
-      setKeywordDetected(false); // Reset visual indicator
-      
-      // Only process if we have speech and we're still in a listening state
-      if (said && (phaseRef.current === "listening" || phaseRef.current === "idle")) {
-        // If keyword is set and not empty, only respond if keyword was detected
-        if (keyword && keyword.trim() && !keywordRef.current) {
-          // Keyword not detected, stay listening without sending to AI
-          updatePhase("listening");
-          return;
-        }
-        void handleUtterance(said);
-      } else if (phaseRef.current === "listening") {
-        // No speech detected, stay in listening mode
-        updatePhase("listening");
-      }
-    };
-
-    recognitionRef.current = recognition;
-    
-    try {
-      recognition.start();
-    } catch (err) {
-      recognitionRef.current = null;
-      isListeningRef.current = false;
-      console.error("Failed to start recognition", err);
-      setError("Could not start microphone. Please try again.");
-      updatePhase("idle");
-    }
-  };
-
-  const handleUtterance = async (said: string) => {
-    // Lock out further input while processing
-    stopRecognition();
+    busyRef.current = true;
     updatePhase("thinking");
     setError(null);
-    
+
     try {
       const reply = await onSendTurn(said);
       if (phaseRef.current === "thinking") {
         await speak(reply);
+      } else {
+        // Interrupted during thinking — back to listening.
+        busyRef.current = false;
+        if (activeRef.current) scheduleRestart(150);
       }
     } catch (sendError) {
       console.error("Live turn failed", sendError);
       setError("That didn't go through. I'm still here — try saying it again.");
+      busyRef.current = false;
       updatePhase("listening");
+      if (activeRef.current) scheduleRestart(150);
     }
   };
 
@@ -561,29 +460,22 @@ export function LiveConversation({
       return;
     }
     setError(null);
-<<<<<<< Updated upstream
-=======
     activeRef.current = true;
     busyRef.current = false;
     pendingTranscriptRef.current = "";
-    setActive(true);
->>>>>>> Stashed changes
     updatePhase("listening");
-    
+
     // Prime speech synthesis to avoid blocking on mobile
     try {
       window.speechSynthesis?.cancel();
     } catch {
       /* ignore */
     }
-    
+
     startRecognition();
   };
 
   const stop = () => {
-<<<<<<< Updated upstream
-    stopRecognition();
-=======
     activeRef.current = false;
     busyRef.current = false;
     clearRestartTimer();
@@ -599,7 +491,6 @@ export function LiveConversation({
     }
     stopWakeRecognition();
     pendingTranscriptRef.current = "";
->>>>>>> Stashed changes
     try {
       window.speechSynthesis?.cancel();
     } catch {
@@ -612,20 +503,17 @@ export function LiveConversation({
 
   const interrupt = () => {
     if (phaseRef.current !== "speaking") return;
+    stopWakeRecognition();
     try {
       window.speechSynthesis?.cancel();
     } catch {
       /* ignore */
     }
-    updatePhase("listening");
-    startRecognition();
+    // finish() fires from utterance.onend, handling phase + recognition restart
   };
 
   useEffect(() => {
     return () => {
-<<<<<<< Updated upstream
-      stopRecognition();
-=======
       activeRef.current = false;
       clearRestartTimer();
       const recognition = recognitionRef.current;
@@ -635,11 +523,10 @@ export function LiveConversation({
           recognition.onend = null;
           recognition.abort();
         } catch {
-          /* ignore */
+          /* already stopped */
         }
       }
       stopWakeRecognition();
->>>>>>> Stashed changes
       try {
         window.speechSynthesis?.cancel();
       } catch {
@@ -654,7 +541,7 @@ export function LiveConversation({
     if (!content || phaseRef.current === "thinking") return;
     setText("");
     updatePhase("thinking");
-    
+
     try {
       const reply = await onSendTurn(content);
       if (supported && phaseRef.current === "thinking") {
@@ -673,14 +560,9 @@ export function LiveConversation({
     switch (phase) {
       case "listening":
         if (partial) return partial;
-<<<<<<< Updated upstream
-        if (keyword && keyword.trim()) return keywordDetected ? `Keyword "${keyword}" detected - speak now.` : `Listening... say "${keyword}" to talk to ${companionName}.`;
-        return "Listening… speak naturally.";
-=======
         return wakeWordEnabled
           ? `Listening… say "${wakeWord || "over"}" when you're done talking.`
           : "Listening… speak naturally.";
->>>>>>> Stashed changes
       case "thinking":
         return `${companionName} is thinking…`;
       case "speaking":
@@ -773,7 +655,7 @@ export function LiveConversation({
             <div className="absolute inset-0 bg-primary/20 rounded-full scale-[2] animate-pulse pointer-events-none" />
             <div
               className="absolute inset-0 bg-primary/30 rounded-full scale-[1.5] animate-ping pointer-events-none"
-              style={{ animationDuration: "3s" }}
+              style={{ animationDuration: "1.5s" }}
             />
           </>
         )}

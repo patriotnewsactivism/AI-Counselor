@@ -446,42 +446,32 @@ components:
         - status
     Profile:
       type: object
-<<<<<<< Updated upstream
       required:
         [
           userId,
           companionName,
           historyPinEnabled,
           phoneAccessCodeEnabled,
-          keywordModeEnabled,
-          keywordWord,
+          wakeWordEnabled,
           createdAt,
           updatedAt,
         ]
-=======
-      required: [userId, companionName, wakeWordEnabled, createdAt, updatedAt]
->>>>>>> Stashed changes
       properties:
         userId: { type: string }
         preferredName: { type: ["string", "null"] }
         companionName: { type: string }
-<<<<<<< Updated upstream
         historyPinEnabled:
           type: boolean
           description: True if a History PIN is configured, gating access to past conversations
         phoneAccessCodeEnabled:
           type: boolean
           description: True if a 6-digit phone access code is configured, letting the phone line identify this account
-        keywordModeEnabled:
+        wakeWordEnabled:
           type: boolean
-          description: True if live voice (browser and phone) should wait for keywordWord instead of ending a turn on silence
-        keywordWord:
-          type: string
-          description: The keyword that ends a turn when keywordModeEnabled is true
-=======
-        wakeWordEnabled: { type: boolean }
-        wakeWord: { type: ["string", "null"] }
->>>>>>> Stashed changes
+          description: True if live voice should wait for the wakeWord sign-off instead of ending a turn on the first silence
+        wakeWord:
+          type: ["string", "null"]
+          description: The sign-off word that ends a turn when wakeWordEnabled is true (e.g. "over")
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
     ProfileUpdate:
@@ -489,13 +479,8 @@ components:
       properties:
         preferredName: { type: string }
         companionName: { type: string, minLength: 1 }
-<<<<<<< Updated upstream
-        keywordModeEnabled: { type: boolean }
-        keywordWord: { type: string, minLength: 1, maxLength: 32 }
-=======
         wakeWordEnabled: { type: boolean }
-        wakeWord: { type: string }
->>>>>>> Stashed changes
+        wakeWord: { type: string, minLength: 1, maxLength: 32 }
     Stats:
       type: object
       required:

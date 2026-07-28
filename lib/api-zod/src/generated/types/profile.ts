@@ -11,20 +11,17 @@ export interface Profile {
   /** @nullable */
   preferredName?: string | null;
   companionName: string;
-<<<<<<< Updated upstream
   /** True if a History PIN is configured, gating access to past conversations */
   historyPinEnabled: boolean;
   /** True if a 6-digit phone access code is configured, letting the phone line identify this account */
   phoneAccessCodeEnabled: boolean;
-  /** True if live voice (browser and phone) should wait for keywordWord instead of ending a turn on silence */
-  keywordModeEnabled: boolean;
-  /** The keyword that ends a turn when keywordModeEnabled is true */
-  keywordWord: string;
-=======
+  /** True if live voice should wait for the wakeWord sign-off instead of ending a turn on the first silence */
   wakeWordEnabled: boolean;
-  /** @nullable */
+  /**
+     * The sign-off word that ends a turn when wakeWordEnabled is true (e.g. "over")
+     * @nullable
+     */
   wakeWord?: string | null;
->>>>>>> Stashed changes
   createdAt: Date;
   updatedAt: Date;
 }

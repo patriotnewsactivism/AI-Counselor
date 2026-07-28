@@ -14,19 +14,10 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Loader2, User, Mic, Square, Settings2 } from "lucide-react";
+import { Loader2, User, Mic, Square } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { getListMessagesQueryKey, getListConversationsQueryKey, getGetConversationQueryKey } from "@workspace/api-client-react";
 import { useToast } from "@/hooks/use-toast";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
 
 const GROK_BETA_KEY = "ai-therapist:grokVoiceBeta";
 
@@ -51,6 +42,7 @@ export default function CompanionPage() {
   const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const conversationIdRef = useRef<number | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const { toast } = useToast();
   const streamRecorderRef = useRef<VoiceStreamRecorderHandle>(null);
@@ -62,10 +54,6 @@ export default function CompanionPage() {
   });
   const [streamState, setStreamState] = useState<StreamTurnState>("idle");
   const [streamTranscript, setStreamTranscript] = useState("");
-  const [keyword, setKeyword] = useState(() => {
-    if (typeof window === "undefined") return "";
-    return window.localStorage.getItem("ai-therapist:keyword") || "";
-  });
 
   const isNew = !id;
   const conversationId = isNew ? null : parseInt(id, 10);
@@ -94,9 +82,11 @@ export default function CompanionPage() {
     window.localStorage.setItem(GROK_BETA_KEY, useGrokBeta ? "1" : "0");
   }, [useGrokBeta]);
 
+  // Keep the ref in sync with the URL param so ensureConversation() returns
+  // the existing conversation id instead of creating a new one on first turn.
   useEffect(() => {
-    window.localStorage.setItem("ai-therapist:keyword", keyword);
-  }, [keyword]);
+    conversationIdRef.current = conversationId ?? null;
+  }, [conversationId]);
 
   // Guards against a race where two turns are sent back-to-back before the
   // URL has re-rendered with the newly created conversation's id: without
@@ -302,47 +292,12 @@ export default function CompanionPage() {
             />
           </div>
         ) : (
-<<<<<<< Updated upstream
-          <div className="flex flex-col items-center gap-3">
-            <LiveConversation onSendTurn={sendConversationTurn} companionName={companionName} keyword={keyword || undefined} />
-            <Dialog>
-              <DialogTrigger asChild>
-                <Button variant="ghost" size="sm" className="gap-1.5 text-xs text-muted-foreground hover:text-foreground">
-                  <Settings2 className="h-3.5 w-3.5" /> Voice Settings
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="sm:max-w-[425px]">
-                <DialogHeader>
-                  <DialogTitle>Voice Activation</DialogTitle>
-                  <DialogDescription>
-                    Optionally set a keyword that must be spoken before the counselor will respond. Leave empty for normal conversation.
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="grid gap-4 py-4">
-                  <div className="grid grid-cols-4 items-center gap-4">
-                    <label htmlFor="keyword" className="col-span-4 text-sm font-medium">
-                      Activation Keyword
-                    </label>
-                    <Input
-                      id="keyword"
-                      value={keyword}
-                      onChange={(e) => setKeyword(e.target.value)}
-                      placeholder="e.g., Aura, Hey Counselor"
-                      className="col-span-4"
-                    />
-                  </div>
-                </div>
-              </DialogContent>
-            </Dialog>
-          </div>
-=======
           <LiveConversation
             onSendTurn={sendConversationTurn}
             companionName={companionName}
             wakeWordEnabled={wakeWordEnabled}
             wakeWord={wakeWord}
           />
->>>>>>> Stashed changes
         )}
       </div>
     </div>

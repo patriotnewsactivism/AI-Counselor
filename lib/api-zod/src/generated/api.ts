@@ -24,15 +24,10 @@ export const GetProfileResponse = zod.object({
   "userId": zod.string(),
   "preferredName": zod.string().nullish(),
   "companionName": zod.string(),
-<<<<<<< Updated upstream
   "historyPinEnabled": zod.boolean().describe('True if a History PIN is configured, gating access to past conversations'),
   "phoneAccessCodeEnabled": zod.boolean().describe('True if a 6-digit phone access code is configured, letting the phone line identify this account'),
-  "keywordModeEnabled": zod.boolean().describe('True if live voice (browser and phone) should wait for keywordWord instead of ending a turn on silence'),
-  "keywordWord": zod.string().describe('The keyword that ends a turn when keywordModeEnabled is true'),
-=======
-  "wakeWordEnabled": zod.boolean(),
-  "wakeWord": zod.string().nullish(),
->>>>>>> Stashed changes
+  "wakeWordEnabled": zod.boolean().describe('True if live voice should wait for the wakeWord sign-off instead of ending a turn on the first silence'),
+  "wakeWord": zod.string().nullish().describe('The sign-off word that ends a turn when wakeWordEnabled is true (e.g. \"over\")'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -42,35 +37,25 @@ export const GetProfileResponse = zod.object({
  * @summary Update the current user's profile
  */
 
-export const updateProfileBodyKeywordWordMax = 32;
+export const updateProfileBodyWakeWordMax = 32;
 
 
 
 export const UpdateProfileBody = zod.object({
   "preferredName": zod.string().optional(),
   "companionName": zod.string().min(1).optional(),
-<<<<<<< Updated upstream
-  "keywordModeEnabled": zod.boolean().optional(),
-  "keywordWord": zod.string().min(1).max(updateProfileBodyKeywordWordMax).optional()
-=======
   "wakeWordEnabled": zod.boolean().optional(),
-  "wakeWord": zod.string().optional()
->>>>>>> Stashed changes
+  "wakeWord": zod.string().min(1).max(updateProfileBodyWakeWordMax).optional()
 })
 
 export const UpdateProfileResponse = zod.object({
   "userId": zod.string(),
   "preferredName": zod.string().nullish(),
   "companionName": zod.string(),
-<<<<<<< Updated upstream
   "historyPinEnabled": zod.boolean().describe('True if a History PIN is configured, gating access to past conversations'),
   "phoneAccessCodeEnabled": zod.boolean().describe('True if a 6-digit phone access code is configured, letting the phone line identify this account'),
-  "keywordModeEnabled": zod.boolean().describe('True if live voice (browser and phone) should wait for keywordWord instead of ending a turn on silence'),
-  "keywordWord": zod.string().describe('The keyword that ends a turn when keywordModeEnabled is true'),
-=======
-  "wakeWordEnabled": zod.boolean(),
-  "wakeWord": zod.string().nullish(),
->>>>>>> Stashed changes
+  "wakeWordEnabled": zod.boolean().describe('True if live voice should wait for the wakeWord sign-off instead of ending a turn on the first silence'),
+  "wakeWord": zod.string().nullish().describe('The sign-off word that ends a turn when wakeWordEnabled is true (e.g. \"over\")'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -342,8 +327,8 @@ export const SetPhoneAccessCodeResponse = zod.object({
   "companionName": zod.string(),
   "historyPinEnabled": zod.boolean().describe('True if a History PIN is configured, gating access to past conversations'),
   "phoneAccessCodeEnabled": zod.boolean().describe('True if a 6-digit phone access code is configured, letting the phone line identify this account'),
-  "keywordModeEnabled": zod.boolean().describe('True if live voice (browser and phone) should wait for keywordWord instead of ending a turn on silence'),
-  "keywordWord": zod.string().describe('The keyword that ends a turn when keywordModeEnabled is true'),
+  "wakeWordEnabled": zod.boolean().describe('True if live voice should wait for the wakeWord sign-off instead of ending a turn on the first silence'),
+  "wakeWord": zod.string().nullish().describe('The sign-off word that ends a turn when wakeWordEnabled is true (e.g. \"over\")'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -362,8 +347,8 @@ export const RemovePhoneAccessCodeResponse = zod.object({
   "companionName": zod.string(),
   "historyPinEnabled": zod.boolean().describe('True if a History PIN is configured, gating access to past conversations'),
   "phoneAccessCodeEnabled": zod.boolean().describe('True if a 6-digit phone access code is configured, letting the phone line identify this account'),
-  "keywordModeEnabled": zod.boolean().describe('True if live voice (browser and phone) should wait for keywordWord instead of ending a turn on silence'),
-  "keywordWord": zod.string().describe('The keyword that ends a turn when keywordModeEnabled is true'),
+  "wakeWordEnabled": zod.boolean().describe('True if live voice should wait for the wakeWord sign-off instead of ending a turn on the first silence'),
+  "wakeWord": zod.string().nullish().describe('The sign-off word that ends a turn when wakeWordEnabled is true (e.g. \"over\")'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
