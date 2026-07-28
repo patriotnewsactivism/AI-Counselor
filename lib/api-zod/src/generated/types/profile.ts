@@ -11,6 +11,7 @@ export interface Profile {
   /** @nullable */
   preferredName?: string | null;
   companionName: string;
+<<<<<<< Updated upstream
   /** True if a History PIN is configured, gating access to past conversations */
   historyPinEnabled: boolean;
   /** True if a 6-digit phone access code is configured, letting the phone line identify this account */
@@ -19,6 +20,11 @@ export interface Profile {
   keywordModeEnabled: boolean;
   /** The keyword that ends a turn when keywordModeEnabled is true */
   keywordWord: string;
+=======
+  wakeWordEnabled: boolean;
+  /** @nullable */
+  wakeWord?: string | null;
+>>>>>>> Stashed changes
   createdAt: Date;
   updatedAt: Date;
 }

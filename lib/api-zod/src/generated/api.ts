@@ -24,10 +24,15 @@ export const GetProfileResponse = zod.object({
   "userId": zod.string(),
   "preferredName": zod.string().nullish(),
   "companionName": zod.string(),
+<<<<<<< Updated upstream
   "historyPinEnabled": zod.boolean().describe('True if a History PIN is configured, gating access to past conversations'),
   "phoneAccessCodeEnabled": zod.boolean().describe('True if a 6-digit phone access code is configured, letting the phone line identify this account'),
   "keywordModeEnabled": zod.boolean().describe('True if live voice (browser and phone) should wait for keywordWord instead of ending a turn on silence'),
   "keywordWord": zod.string().describe('The keyword that ends a turn when keywordModeEnabled is true'),
+=======
+  "wakeWordEnabled": zod.boolean(),
+  "wakeWord": zod.string().nullish(),
+>>>>>>> Stashed changes
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -44,18 +49,28 @@ export const updateProfileBodyKeywordWordMax = 32;
 export const UpdateProfileBody = zod.object({
   "preferredName": zod.string().optional(),
   "companionName": zod.string().min(1).optional(),
+<<<<<<< Updated upstream
   "keywordModeEnabled": zod.boolean().optional(),
   "keywordWord": zod.string().min(1).max(updateProfileBodyKeywordWordMax).optional()
+=======
+  "wakeWordEnabled": zod.boolean().optional(),
+  "wakeWord": zod.string().optional()
+>>>>>>> Stashed changes
 })
 
 export const UpdateProfileResponse = zod.object({
   "userId": zod.string(),
   "preferredName": zod.string().nullish(),
   "companionName": zod.string(),
+<<<<<<< Updated upstream
   "historyPinEnabled": zod.boolean().describe('True if a History PIN is configured, gating access to past conversations'),
   "phoneAccessCodeEnabled": zod.boolean().describe('True if a 6-digit phone access code is configured, letting the phone line identify this account'),
   "keywordModeEnabled": zod.boolean().describe('True if live voice (browser and phone) should wait for keywordWord instead of ending a turn on silence'),
   "keywordWord": zod.string().describe('The keyword that ends a turn when keywordModeEnabled is true'),
+=======
+  "wakeWordEnabled": zod.boolean(),
+  "wakeWord": zod.string().nullish(),
+>>>>>>> Stashed changes
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })

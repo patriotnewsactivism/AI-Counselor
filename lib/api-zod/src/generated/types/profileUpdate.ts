@@ -10,10 +10,15 @@ export interface ProfileUpdate {
   preferredName?: string;
   /** @minLength 1 */
   companionName?: string;
+<<<<<<< Updated upstream
   keywordModeEnabled?: boolean;
   /**
      * @minLength 1
      * @maxLength 32
      */
   keywordWord?: string;
+=======
+  wakeWordEnabled?: boolean;
+  wakeWord?: string;
+>>>>>>> Stashed changes
 }

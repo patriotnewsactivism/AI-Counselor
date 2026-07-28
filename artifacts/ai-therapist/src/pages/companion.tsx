@@ -83,6 +83,8 @@ export default function CompanionPage() {
 
   const companionName = profile?.companionName || "Aura";
   const userName = profile?.preferredName || "You";
+  const wakeWordEnabled = profile?.wakeWordEnabled ?? false;
+  const wakeWord = (profile?.wakeWord?.trim() || "over").trim();
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollIntoView({ behavior: "smooth" });
@@ -300,6 +302,7 @@ export default function CompanionPage() {
             />
           </div>
         ) : (
+<<<<<<< Updated upstream
           <div className="flex flex-col items-center gap-3">
             <LiveConversation onSendTurn={sendConversationTurn} companionName={companionName} keyword={keyword || undefined} />
             <Dialog>
@@ -332,6 +335,14 @@ export default function CompanionPage() {
               </DialogContent>
             </Dialog>
           </div>
+=======
+          <LiveConversation
+            onSendTurn={sendConversationTurn}
+            companionName={companionName}
+            wakeWordEnabled={wakeWordEnabled}
+            wakeWord={wakeWord}
+          />
+>>>>>>> Stashed changes
         )}
       </div>
     </div>

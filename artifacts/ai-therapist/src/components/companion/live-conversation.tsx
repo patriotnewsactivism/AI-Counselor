@@ -18,6 +18,27 @@ import { cn } from "@/lib/utils";
 
 type Phase = "idle" | "listening" | "thinking" | "speaking";
 
+<<<<<<< Updated upstream
+=======
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Radio-protocol style: the trigger word is a sign-off said at the END of
+// what the user wants to say (e.g. "...that's all, over."), not a wake-up
+// call said before it. Only matches when it's the last word in the text
+// (optionally followed by punctuation), so ordinary sentences that happen to
+// contain the word midway ("moreover", "over the moon") don't false-trigger.
+function splitOnTriggerWord(text: string, trigger: string): string | null {
+  if (!trigger) return null;
+  const match = new RegExp(`\\b${escapeRegExp(trigger)}\\b[.,!?]*\\s*$`, "i").exec(text);
+  if (!match) return null;
+  return text.slice(0, match.index).trim();
+}
+
+// Minimal Web Speech API typings — these interfaces are not present in every
+// TS DOM lib version, so we describe just the surface we use.
+>>>>>>> Stashed changes
 interface SpeechAlternativeLike {
   transcript: string;
 }
@@ -66,10 +87,27 @@ function speechSupported(): boolean {
 interface LiveConversationProps {
   onSendTurn: (text: string) => Promise<string>;
   companionName: string;
+<<<<<<< Updated upstream
   keyword?: string; // Optional keyword that must be said to trigger response
 }
 
 export function LiveConversation({ onSendTurn, companionName, keyword }: LiveConversationProps) {
+=======
+  /** When true, the mic keeps transcribing through pauses and multiple
+   *  sentences without replying — a turn is only sent once `wakeWord` is
+   *  said as a sign-off (e.g. "over"), and saying it again while she's
+   *  speaking interrupts her. */
+  wakeWordEnabled: boolean;
+  wakeWord: string;
+}
+
+export function LiveConversation({
+  onSendTurn,
+  companionName,
+  wakeWordEnabled,
+  wakeWord,
+}: LiveConversationProps) {
+>>>>>>> Stashed changes
   const [phase, setPhase] = useState<Phase>("idle");
   const [error, setError] = useState<string | null>(null);
   const [partial, setPartial] = useState("");
@@ -83,6 +121,19 @@ export function LiveConversation({ onSendTurn, companionName, keyword }: LiveCon
   const voicesRef = useRef<SpeechSynthesisVoice[]>([]);
   const isListeningRef = useRef(false);
   const keywordRef = useRef(false); // Track keyword detection within current utterance
+
+  const wakeWordEnabledRef = useRef(false);
+  const wakeWordRef = useRef("");
+  const wakeRecognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const wakeRestartTimerRef = useRef<number | null>(null);
+  // Accumulates finalized speech across pauses/recognizer restarts until the
+  // trigger word ends a turn. Only used when wakeWordEnabled is true.
+  const pendingTranscriptRef = useRef("");
+
+  useEffect(() => {
+    wakeWordEnabledRef.current = wakeWordEnabled;
+    wakeWordRef.current = (wakeWord || "over").trim().toLocaleLowerCase();
+  }, [wakeWordEnabled, wakeWord]);
 
   const updatePhase = (next: Phase) => {
     phaseRef.current = next;
@@ -117,6 +168,226 @@ export function LiveConversation({ onSendTurn, companionName, keyword }: LiveCon
     return warm ?? pool[0];
   };
 
+<<<<<<< Updated upstream
+=======
+  const clearRestartTimer = () => {
+    if (restartTimerRef.current !== null) {
+      window.clearTimeout(restartTimerRef.current);
+      restartTimerRef.current = null;
+    }
+  };
+
+  const scheduleRestart = (delay = 250) => {
+    clearRestartTimer();
+    restartTimerRef.current = window.setTimeout(() => {
+      restartTimerRef.current = null;
+      startRecognition();
+    }, delay);
+  };
+
+  const startRecognition = () => {
+    if (!activeRef.current || busyRef.current || recognitionRef.current || wakeRecognitionRef.current) return;
+    const Ctor = getRecognitionCtor();
+    if (!Ctor) return;
+
+    // Fixed for the lifetime of this recognizer instance, so a mid-utterance
+    // settings change can't flip behavior underneath an in-flight session.
+    const gated = wakeWordEnabledRef.current;
+
+    const recognition = new Ctor();
+    recognition.continuous = gated;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+    recognition.maxAlternatives = 1;
+
+    let finalText = ""; // only used in the non-gated (default) path
+
+    recognition.onstart = () => {
+      if (activeRef.current && !busyRef.current) updatePhase("listening");
+    };
+
+    recognition.onresult = (event) => {
+      if (!gated) {
+        let interim = "";
+        for (let index = event.resultIndex; index < event.results.length; index += 1) {
+          const result = event.results[index];
+          const transcript = result?.[0]?.transcript ?? "";
+          if (result?.isFinal) finalText += transcript;
+          else interim += transcript;
+        }
+        setPartial((interim || finalText).trim());
+        return;
+      }
+
+      // Gated: keep accumulating finalized speech across pauses until the
+      // trigger word closes out the turn.
+      let interim = "";
+      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+        const result = event.results[index];
+        const transcript = result?.[0]?.transcript ?? "";
+        if (!result?.isFinal) {
+          interim += transcript;
+          continue;
+        }
+        const combined = pendingTranscriptRef.current
+          ? `${pendingTranscriptRef.current} ${transcript.trim()}`.trim()
+          : transcript.trim();
+        const said = splitOnTriggerWord(combined, wakeWordRef.current);
+        if (said !== null) {
+          pendingTranscriptRef.current = "";
+          setPartial("");
+          recognition.onend = null;
+          recognitionRef.current = null;
+          try {
+            recognition.abort();
+          } catch {
+            /* already stopped */
+          }
+          if (said) {
+            void handleUtterance(said);
+          } else if (activeRef.current) {
+            // Trigger word said with nothing meaningful before it — keep listening.
+            scheduleRestart(150);
+          }
+          return;
+        }
+        pendingTranscriptRef.current = combined;
+      }
+      setPartial(interim ? `${pendingTranscriptRef.current} ${interim}`.trim() : pendingTranscriptRef.current);
+    };
+
+    recognition.onerror = (event) => {
+      const errorKind = event.error;
+      if (errorKind === "not-allowed" || errorKind === "service-not-allowed") {
+        setError(
+          "Microphone access is blocked. Enable the mic permission for this site in your browser, then tap Start again.",
+        );
+        stop();
+      }
+      // "no-speech", "aborted", "network", etc. fall through to onend, which
+      // decides whether to loop the mic again.
+    };
+
+    recognition.onend = () => {
+      recognitionRef.current = null;
+      if (gated) {
+        // Natural end (silence gap, browser session limit) without hearing
+        // the trigger word yet — resume, keeping whatever was accumulated.
+        if (!activeRef.current) return;
+        if (!busyRef.current) scheduleRestart(300);
+        return;
+      }
+      const said = finalText.trim();
+      setPartial("");
+      if (!activeRef.current) return;
+      if (said) {
+        void handleUtterance(said);
+      } else if (!busyRef.current) {
+        scheduleRestart(300);
+      }
+    };
+
+    recognitionRef.current = recognition;
+    try {
+      recognition.start();
+    } catch {
+      // start() throws if called too soon after the previous session ended.
+      recognitionRef.current = null;
+      scheduleRestart(400);
+    }
+  };
+
+  const clearWakeRestartTimer = () => {
+    if (wakeRestartTimerRef.current !== null) {
+      window.clearTimeout(wakeRestartTimerRef.current);
+      wakeRestartTimerRef.current = null;
+    }
+  };
+
+  const scheduleWakeRestart = (delay = 300) => {
+    clearWakeRestartTimer();
+    wakeRestartTimerRef.current = window.setTimeout(() => {
+      wakeRestartTimerRef.current = null;
+      startWakeRecognition();
+    }, delay);
+  };
+
+  const stopWakeRecognition = () => {
+    clearWakeRestartTimer();
+    const recognition = wakeRecognitionRef.current;
+    wakeRecognitionRef.current = null;
+    if (recognition) {
+      try {
+        recognition.onend = null;
+        recognition.abort();
+      } catch {
+        /* already stopped */
+      }
+    }
+  };
+
+  // Runs only while the companion is thinking/speaking (mic is otherwise off
+  // during that window) so saying the trigger word again barges in on her.
+  const startWakeRecognition = () => {
+    if (
+      !activeRef.current ||
+      !wakeWordEnabledRef.current ||
+      !busyRef.current ||
+      recognitionRef.current ||
+      wakeRecognitionRef.current
+    ) {
+      return;
+    }
+    const Ctor = getRecognitionCtor();
+    if (!Ctor) return;
+
+    const recognition = new Ctor();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+    recognition.maxAlternatives = 1;
+
+    recognition.onresult = (event) => {
+      const target = wakeWordRef.current;
+      if (!target) return;
+      const triggerPattern = new RegExp(`\\b${escapeRegExp(target)}\\b`, "i");
+      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+        const transcript = (event.results[index]?.[0]?.transcript ?? "").trim();
+        if (transcript && triggerPattern.test(transcript)) {
+          stopWakeRecognition();
+          interrupt();
+          break;
+        }
+      }
+    };
+
+    recognition.onerror = (event) => {
+      const errorKind = event.error;
+      if (errorKind === "not-allowed" || errorKind === "service-not-allowed") {
+        setError(
+          "Microphone access is blocked. Enable the mic permission for this site in your browser, then tap Start again.",
+        );
+        stop();
+      }
+      // Other errors fall through to onend, which decides whether to loop.
+    };
+
+    recognition.onend = () => {
+      wakeRecognitionRef.current = null;
+      if (!activeRef.current || !wakeWordEnabledRef.current || !busyRef.current) return;
+      scheduleWakeRestart();
+    };
+
+    wakeRecognitionRef.current = recognition;
+    try {
+      recognition.start();
+    } catch {
+      wakeRecognitionRef.current = null;
+      scheduleWakeRestart(400);
+    }
+  };
+
+>>>>>>> Stashed changes
   const speak = (toSpeak: string): Promise<void> =>
     new Promise((resolve) => {
       if (!toSpeak || typeof window === "undefined" || !("speechSynthesis" in window)) {
@@ -129,6 +400,7 @@ export function LiveConversation({ onSendTurn, companionName, keyword }: LiveCon
         /* ignore */
       }
       updatePhase("speaking");
+      if (wakeWordEnabledRef.current) startWakeRecognition(); // arm barge-in-by-wake-word
       const utterance = new SpeechSynthesisUtterance(toSpeak);
       const voice = pickVoice();
       if (voice) utterance.voice = voice;
@@ -289,6 +561,13 @@ export function LiveConversation({ onSendTurn, companionName, keyword }: LiveCon
       return;
     }
     setError(null);
+<<<<<<< Updated upstream
+=======
+    activeRef.current = true;
+    busyRef.current = false;
+    pendingTranscriptRef.current = "";
+    setActive(true);
+>>>>>>> Stashed changes
     updatePhase("listening");
     
     // Prime speech synthesis to avoid blocking on mobile
@@ -302,7 +581,25 @@ export function LiveConversation({ onSendTurn, companionName, keyword }: LiveCon
   };
 
   const stop = () => {
+<<<<<<< Updated upstream
     stopRecognition();
+=======
+    activeRef.current = false;
+    busyRef.current = false;
+    clearRestartTimer();
+    const recognition = recognitionRef.current;
+    recognitionRef.current = null;
+    if (recognition) {
+      try {
+        recognition.onend = null;
+        recognition.abort();
+      } catch {
+        /* already stopped */
+      }
+    }
+    stopWakeRecognition();
+    pendingTranscriptRef.current = "";
+>>>>>>> Stashed changes
     try {
       window.speechSynthesis?.cancel();
     } catch {
@@ -326,7 +623,23 @@ export function LiveConversation({ onSendTurn, companionName, keyword }: LiveCon
 
   useEffect(() => {
     return () => {
+<<<<<<< Updated upstream
       stopRecognition();
+=======
+      activeRef.current = false;
+      clearRestartTimer();
+      const recognition = recognitionRef.current;
+      recognitionRef.current = null;
+      if (recognition) {
+        try {
+          recognition.onend = null;
+          recognition.abort();
+        } catch {
+          /* ignore */
+        }
+      }
+      stopWakeRecognition();
+>>>>>>> Stashed changes
       try {
         window.speechSynthesis?.cancel();
       } catch {
@@ -360,8 +673,14 @@ export function LiveConversation({ onSendTurn, companionName, keyword }: LiveCon
     switch (phase) {
       case "listening":
         if (partial) return partial;
+<<<<<<< Updated upstream
         if (keyword && keyword.trim()) return keywordDetected ? `Keyword "${keyword}" detected - speak now.` : `Listening... say "${keyword}" to talk to ${companionName}.`;
         return "Listening… speak naturally.";
+=======
+        return wakeWordEnabled
+          ? `Listening… say "${wakeWord || "over"}" when you're done talking.`
+          : "Listening… speak naturally.";
+>>>>>>> Stashed changes
       case "thinking":
         return `${companionName} is thinking…`;
       case "speaking":

@@ -1,4 +1,8 @@
+<<<<<<< Updated upstream
 import { pgTable, text, boolean, timestamp } from "drizzle-orm/pg-core";
+=======
+import { boolean, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+>>>>>>> Stashed changes
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -6,6 +10,7 @@ export const profilesTable = pgTable("profiles", {
   userId: text("user_id").primaryKey(),
   preferredName: text("preferred_name"),
   companionName: text("companion_name").notNull().default("Clara"),
+<<<<<<< Updated upstream
   // Salted+hashed PIN gating access to past conversations (see
   // artifacts/api-server/src/lib/historyAccess.ts). Null means the user
   // hasn't opted into a History PIN yet.
@@ -22,6 +27,10 @@ export const profilesTable = pgTable("profiles", {
   // tool (phone).
   keywordModeEnabled: boolean("keyword_mode_enabled").notNull().default(false),
   keywordWord: text("keyword_word").notNull().default("over"),
+=======
+  wakeWordEnabled: boolean("wake_word_enabled").notNull().default(false),
+  wakeWord: text("wake_word"),
+>>>>>>> Stashed changes
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
