@@ -71,7 +71,6 @@ export default function CompanionPage() {
 
   const companionName = profile?.companionName || "Aura";
   const userName = profile?.preferredName || "You";
-  const wakeWordEnabled = profile?.wakeWordEnabled ?? false;
   const wakeWord = (profile?.wakeWord?.trim() || "over").trim();
 
   useEffect(() => {
@@ -295,7 +294,6 @@ export default function CompanionPage() {
           <LiveConversation
             onSendTurn={sendConversationTurn}
             companionName={companionName}
-            wakeWordEnabled={wakeWordEnabled}
             wakeWord={wakeWord}
           />
         )}

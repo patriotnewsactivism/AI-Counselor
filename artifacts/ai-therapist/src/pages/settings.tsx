@@ -10,7 +10,6 @@ import { Settings, Save, User, MessageSquare, BookHeart, Calendar, Mic } from "l
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import { useQueryClient } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
@@ -28,7 +27,6 @@ export default function SettingsPage() {
 
   const [preferredName, setPreferredName] = useState("");
   const [companionName, setCompanionName] = useState("");
-  const [wakeWordEnabled, setWakeWordEnabled] = useState(false);
   const [wakeWord, setWakeWord] = useState("");
 
   const initialized = useRef(false);
@@ -37,7 +35,6 @@ export default function SettingsPage() {
     if (profile && !initialized.current) {
       setPreferredName(profile.preferredName || "");
       setCompanionName(profile.companionName || "Aura");
-      setWakeWordEnabled(profile.wakeWordEnabled ?? false);
       setWakeWord(profile.wakeWord || "");
       initialized.current = true;
     }
@@ -50,7 +47,6 @@ export default function SettingsPage() {
         data: {
           preferredName: preferredName.trim() || undefined,
           companionName: companionName.trim() || "Aura",
-          wakeWordEnabled,
           wakeWord: wakeWord.trim() || undefined
         }
       });
@@ -119,31 +115,19 @@ export default function SettingsPage() {
                     />
                   </div>
 
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between max-w-md">
-                      <Label htmlFor="wakeWordEnabled">Wait for a sign-off word before replying</Label>
-                      <Switch
-                        id="wakeWordEnabled"
-                        checked={wakeWordEnabled}
-                        onCheckedChange={setWakeWordEnabled}
-                      />
-                    </div>
-                    {wakeWordEnabled && (
-                      <div className="space-y-2">
-                        <Label htmlFor="wakeWord">Sign-off word</Label>
-                        <Input
-                          id="wakeWord"
-                          value={wakeWord}
-                          onChange={(e) => setWakeWord(e.target.value)}
-                          placeholder="e.g. over"
-                          maxLength={32}
-                          className="max-w-md bg-background"
-                        />
-                        <p className="text-xs text-muted-foreground">
-                          Like radio protocol: keep talking through pauses and multiple sentences — I'll only reply once you end with "{wakeWord.trim() || "over"}".
-                        </p>
-                      </div>
-                    )}
+                  <div className="space-y-2">
+                    <Label htmlFor="wakeWord">Sign-off word</Label>
+                    <Input
+                      id="wakeWord"
+                      value={wakeWord}
+                      onChange={(e) => setWakeWord(e.target.value)}
+                      placeholder="e.g. over"
+                      maxLength={32}
+                      className="max-w-md bg-background"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Like radio protocol: keep talking through pauses and multiple sentences — I'll only reply once you end with "{wakeWord.trim() || "over"}".
+                    </p>
                   </div>
 
                   <Button type="submit" disabled={updateProfile.isPending} className="bg-primary text-primary-foreground hover:opacity-90">

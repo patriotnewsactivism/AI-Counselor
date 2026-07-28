@@ -4,18 +4,18 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 /**
- * Live conversation component rebuilt from scratch for reliability.
+ * Live conversation component — always-on wake-word (sign-off) mode.
  *
- * Architecture: Simple state machine with mutually exclusive states.
+ * The mic keeps listening through pauses and multiple sentences without
+ * replying. A turn is only sent once the caller says the wake word (e.g.
+ * "over") as a sign-off at the end of their speech. Saying the wake word
+ * again while the companion is speaking interrupts her (barge-in).
+ *
+ * State machine:
  * - IDLE: Ready to start
- * - LISTENING: Mic active, waiting for speech
+ * - LISTENING: Mic active, accumulating speech, waiting for wake word
  * - THINKING: Sent to AI, waiting for response
- * - SPEAKING: Playing AI response
- *
- * Wake-word (sign-off) mode: when wakeWordEnabled is true, the mic keeps
- * transcribing through pauses and multiple sentences without replying — a
- * turn is only sent once `wakeWord` is spoken as a sign-off (e.g. "over"),
- * and saying it again while she's speaking interrupts her (barge-in).
+ * - SPEAKING: Playing AI response (barge-in armed)
  */
 
 type Phase = "idle" | "listening" | "thinking" | "speaking";
@@ -24,7 +24,7 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-// Radio-protocol style: the trigger word is a sign-off said at the END of
+// Radio-protocol style: the wake word is a sign-off said at the END of
 // what the user wants to say (e.g. "...that's all, over."), not a wake-up
 // call said before it. Only matches when it's the last word in the text
 // (optionally followed by punctuation), so ordinary sentences that happen to
@@ -86,18 +86,13 @@ function speechSupported(): boolean {
 interface LiveConversationProps {
   onSendTurn: (text: string) => Promise<string>;
   companionName: string;
-  /** When true, the mic keeps transcribing through pauses and multiple
-   *  sentences without replying — a turn is only sent once `wakeWord` is
-   *  said as a sign-off (e.g. "over"), and saying it again while she's
-   *  speaking interrupts her. */
-  wakeWordEnabled: boolean;
+  /** Sign-off word that ends a turn (default "over"). */
   wakeWord: string;
 }
 
 export function LiveConversation({
   onSendTurn,
   companionName,
-  wakeWordEnabled,
   wakeWord,
 }: LiveConversationProps) {
   const [phase, setPhase] = useState<Phase>("idle");
@@ -114,18 +109,16 @@ export function LiveConversation({
   const busyRef = useRef(false);
   const restartTimerRef = useRef<number | null>(null);
 
-  const wakeWordEnabledRef = useRef(false);
-  const wakeWordRef = useRef("");
+  const wakeWordRef = useRef("over");
   const wakeRecognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const wakeRestartTimerRef = useRef<number | null>(null);
   // Accumulates finalized speech across pauses/recognizer restarts until the
-  // trigger word ends a turn. Only used when wakeWordEnabled is true.
+  // wake word closes out the turn.
   const pendingTranscriptRef = useRef("");
 
   useEffect(() => {
-    wakeWordEnabledRef.current = wakeWordEnabled;
     wakeWordRef.current = (wakeWord || "over").trim().toLocaleLowerCase();
-  }, [wakeWordEnabled, wakeWord]);
+  }, [wakeWord]);
 
   const updatePhase = (next: Phase) => {
     phaseRef.current = next;
@@ -175,43 +168,25 @@ export function LiveConversation({
     }, delay);
   };
 
-  // ── Main listening recognition ──────────────────────────────────────────
+  // ── Main listening recognition (continuous, always waits for wake word) ─
   const startRecognition = () => {
     if (!activeRef.current || busyRef.current || recognitionRef.current || wakeRecognitionRef.current) return;
     const Ctor = getRecognitionCtor();
     if (!Ctor) return;
 
-    // Fixed for the lifetime of this recognizer instance, so a mid-utterance
-    // settings change can't flip behavior underneath an in-flight session.
-    const gated = wakeWordEnabledRef.current;
-
     const recognition = new Ctor();
-    recognition.continuous = gated;
+    recognition.continuous = true;
     recognition.interimResults = true;
     recognition.lang = "en-US";
     recognition.maxAlternatives = 1;
-
-    let finalText = ""; // only used in the non-gated (default) path
 
     recognition.onstart = () => {
       if (activeRef.current && !busyRef.current) updatePhase("listening");
     };
 
     recognition.onresult = (event) => {
-      if (!gated) {
-        let interim = "";
-        for (let index = event.resultIndex; index < event.results.length; index += 1) {
-          const result = event.results[index];
-          const transcript = result?.[0]?.transcript ?? "";
-          if (result?.isFinal) finalText += transcript;
-          else interim += transcript;
-        }
-        setPartial((interim || finalText).trim());
-        return;
-      }
-
-      // Gated: keep accumulating finalized speech across pauses until the
-      // trigger word closes out the turn.
+      // Keep accumulating finalized speech across pauses until the wake
+      // word closes out the turn.
       let interim = "";
       for (let index = event.resultIndex; index < event.results.length; index += 1) {
         const result = event.results[index];
@@ -237,7 +212,7 @@ export function LiveConversation({
           if (said) {
             void handleUtterance(said);
           } else if (activeRef.current) {
-            // Trigger word said with nothing meaningful before it — keep listening.
+            // Wake word said with nothing meaningful before it — keep listening.
             scheduleRestart(150);
           }
           return;
@@ -261,21 +236,10 @@ export function LiveConversation({
 
     recognition.onend = () => {
       recognitionRef.current = null;
-      if (gated) {
-        // Natural end (silence gap, browser session limit) without hearing
-        // the trigger word yet — resume, keeping whatever was accumulated.
-        if (!activeRef.current) return;
-        if (!busyRef.current) scheduleRestart(300);
-        return;
-      }
-      const said = finalText.trim();
-      setPartial("");
+      // Natural end (silence gap, browser session limit) without hearing
+      // the wake word yet — resume, keeping whatever was accumulated.
       if (!activeRef.current) return;
-      if (said) {
-        void handleUtterance(said);
-      } else if (!busyRef.current) {
-        scheduleRestart(300);
-      }
+      if (!busyRef.current) scheduleRestart(300);
     };
 
     recognitionRef.current = recognition;
@@ -319,11 +283,10 @@ export function LiveConversation({
   };
 
   // Runs only while the companion is thinking/speaking (mic is otherwise off
-  // during that window) so saying the trigger word again barges in on her.
+  // during that window) so saying the wake word again barges in on her.
   const startWakeRecognition = () => {
     if (
       !activeRef.current ||
-      !wakeWordEnabledRef.current ||
       !busyRef.current ||
       recognitionRef.current ||
       wakeRecognitionRef.current
@@ -361,12 +324,11 @@ export function LiveConversation({
         );
         stop();
       }
-      // Other errors fall through to onend, which decides whether to loop.
     };
 
     recognition.onend = () => {
       wakeRecognitionRef.current = null;
-      if (!activeRef.current || !wakeWordEnabledRef.current || !busyRef.current) return;
+      if (!activeRef.current || !busyRef.current) return;
       scheduleWakeRestart();
     };
 
@@ -393,7 +355,7 @@ export function LiveConversation({
       }
       busyRef.current = true;
       updatePhase("speaking");
-      if (wakeWordEnabledRef.current) startWakeRecognition(); // arm barge-in-by-wake-word
+      startWakeRecognition(); // arm barge-in-by-wake-word
       const utterance = new SpeechSynthesisUtterance(toSpeak);
       const voice = pickVoice();
       if (voice) utterance.voice = voice;
@@ -538,13 +500,16 @@ export function LiveConversation({
   const handleTextSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     const content = text.trim();
-    if (!content || phaseRef.current === "thinking") return;
+    if (!content) return;
+    if (phaseRef.current === "thinking") return;
     setText("");
     updatePhase("thinking");
 
     try {
       const reply = await onSendTurn(content);
-      if (supported && phaseRef.current === "thinking") {
+      // Re-read the ref after the await — TypeScript narrows phaseRef.current
+      // at the guard clause above, so we cast to Phase to re-widen.
+      if (supported && (phaseRef.current as Phase) === "thinking") {
         await speak(reply);
       } else {
         updatePhase("idle");
@@ -560,9 +525,7 @@ export function LiveConversation({
     switch (phase) {
       case "listening":
         if (partial) return partial;
-        return wakeWordEnabled
-          ? `Listening… say "${wakeWord || "over"}" when you're done talking.`
-          : "Listening… speak naturally.";
+        return `Listening… say "${wakeWord || "over"}" when you're done talking.`;
       case "thinking":
         return `${companionName} is thinking…`;
       case "speaking":
