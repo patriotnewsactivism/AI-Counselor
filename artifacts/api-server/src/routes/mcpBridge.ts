@@ -10,6 +10,8 @@ import {
   clearFailedPhoneBridgeAttempts,
 } from "../lib/phoneAccess";
 import { findOwnedConversation } from "./conversations/shared";
+import { generateImage } from "../lib/xaiImage";
+import { sendEmail } from "../lib/resendEmail";
 
 /**
  * MCP bridge for the phone-based Grok voice agent (hosted entirely on x.ai's
@@ -69,6 +71,7 @@ const router: IRouter = Router();
 
 const MCP_BRIDGE_SECRET = process.env.MCP_BRIDGE_SECRET;
 const DEFAULT_PROTOCOL_VERSION = "2025-06-18";
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 type JsonRpcRequest = {
   jsonrpc: "2.0";
@@ -163,6 +166,35 @@ const TOOLS = [
         },
       },
       required: ["access_code", "conversation_id", "role", "content"],
+    },
+  },
+  {
+    name: "generate_image",
+    description:
+      "Generate an image from a text description and share it with the caller. If a conversation_id from verify_caller is available, pass it so the image also appears in the caller's chat history in the app.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...ACCESS_CODE_PROPERTY,
+        prompt: { type: "string", description: "A text description of the image to generate." },
+        conversation_id: { type: "integer", description: "Optional -- the conversation_id from verify_caller, to also save this image into the app's chat history." },
+      },
+      required: ["access_code", "prompt"],
+    },
+  },
+  {
+    name: "send_email",
+    description:
+      "Email information, a link, or a summary to the caller. Ask for and confirm their email address back before sending.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...ACCESS_CODE_PROPERTY,
+        to: { type: "string", description: "The recipient's email address." },
+        subject: { type: "string", description: "Email subject line." },
+        body: { type: "string", description: "The email's plain-text content." },
+      },
+      required: ["access_code", "to", "body"],
     },
   },
 ];
@@ -271,6 +303,43 @@ async function handleToolCall(name: string, args: Record<string, unknown> | unde
       speakerName: role === "user" ? speakerName : null,
     });
     return toolText("Logged.");
+  }
+
+  if (name === "generate_image") {
+    const conversationId = typeof args?.conversation_id === "number" ? args.conversation_id : null;
+    const prompt = typeof args?.prompt === "string" ? args.prompt.trim() : "";
+    if (!prompt) return toolText("No prompt provided -- nothing generated.", true);
+    try {
+      const imageUrl = await generateImage(prompt);
+      if (conversationId) {
+        const conversation = await findOwnedConversation(conversationId, profile.userId);
+        if (conversation) {
+          await db.insert(messagesTable).values({
+            conversationId,
+            role: "assistant",
+            content: `Here's what I imagined for "${prompt}":`,
+            imageUrl,
+          });
+        }
+      }
+      return toolText(`Image generated: ${imageUrl}`);
+    } catch {
+      return toolText("I couldn't generate that image right now -- try again in a moment.", true);
+    }
+  }
+
+  if (name === "send_email") {
+    const to = typeof args?.to === "string" ? args.to.trim() : "";
+    const subject = typeof args?.subject === "string" && args.subject.trim() ? args.subject.trim() : "Message from your companion";
+    const emailBody = typeof args?.body === "string" ? args.body.trim() : "";
+    if (!EMAIL_RE.test(to)) return toolText("That doesn't look like a valid email address -- ask the caller to repeat it.", true);
+    if (!emailBody) return toolText("No content provided -- nothing sent.", true);
+    try {
+      await sendEmail(to, subject, emailBody);
+      return toolText(`Sent to ${to}.`);
+    } catch {
+      return toolText("I couldn't send that email right now -- try again in a moment.", true);
+    }
   }
 
   return toolText(`Unknown tool: ${name}`, true);
