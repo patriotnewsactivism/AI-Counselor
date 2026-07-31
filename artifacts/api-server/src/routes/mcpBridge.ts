@@ -69,7 +69,12 @@ import { sendEmail } from "../lib/resendEmail";
 
 const router: IRouter = Router();
 
+// Two agents share this one bridge (Anna the companion, and the front-desk
+// receptionist) -- each has its own connector secret in its own x.ai
+// console, so both are accepted here rather than forcing them to share one.
 const MCP_BRIDGE_SECRET = process.env.MCP_BRIDGE_SECRET;
+const MCP_BRIDGE_SECRET_2 = process.env.MCP_BRIDGE_SECRET_2;
+const VALID_BRIDGE_SECRETS = [MCP_BRIDGE_SECRET, MCP_BRIDGE_SECRET_2].filter((s): s is string => Boolean(s));
 const DEFAULT_PROTOCOL_VERSION = "2025-06-18";
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -399,14 +404,14 @@ router.delete("/mcp/bridge", (_req, res): void => {
 });
 
 router.post("/mcp/bridge", async (req, res): Promise<void> => {
-  if (!MCP_BRIDGE_SECRET) {
-    res.status(500).json(rpcError(null, -32000, "MCP_BRIDGE_SECRET not configured on server"));
+  if (VALID_BRIDGE_SECRETS.length === 0) {
+    res.status(500).json(rpcError(null, -32000, "No bridge secret configured on server"));
     return;
   }
 
   const authHeader = req.headers.authorization ?? "";
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
-  if (token !== MCP_BRIDGE_SECRET) {
+  if (!VALID_BRIDGE_SECRETS.includes(token)) {
     res.status(401).json(rpcError(null, -32001, "Unauthorized"));
     return;
   }
