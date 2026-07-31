@@ -1,5 +1,4 @@
 import { Router, type IRouter } from "express";
-import { z } from "zod/v4";
 import { db, messagesTable } from "@workspace/db";
 import { requireAuth, type AuthedRequest } from "../../middlewares/requireAuth";
 import { findOwnedConversation } from "./shared";
@@ -8,14 +7,16 @@ import { logger } from "../../lib/logger";
 
 const router: IRouter = Router();
 
-const GenerateImageBody = z.object({ prompt: z.string().min(1).max(2000) });
-
 /**
  * Image generation is its own endpoint rather than folded into the regular
  * /messages send flow: it skips the companion LLM reply pipeline entirely
  * (no history/memory grounding needed for "draw me a...") and calls xAI's
  * image model directly, storing the result as an assistant message with
  * imageUrl set so the normal message list can render it inline.
+ *
+ * Validated manually (no zod here) because this package doesn't carry its
+ * own "zod/v4" resolvable dependency the way @workspace/db and
+ * @workspace/api-zod do — esbuild can't bundle it and fails the build.
  */
 router.post("/conversations/:id/generate-image", requireAuth, async (req, res): Promise<void> => {
   const id = parseInt(req.params.id, 10);
@@ -24,9 +25,9 @@ router.post("/conversations/:id/generate-image", requireAuth, async (req, res): 
     return;
   }
 
-  const body = GenerateImageBody.safeParse(req.body);
-  if (!body.success) {
-    res.status(400).json({ error: body.error.message });
+  const prompt = typeof req.body?.prompt === "string" ? req.body.prompt.trim() : "";
+  if (!prompt || prompt.length > 2000) {
+    res.status(400).json({ error: "prompt must be a non-empty string up to 2000 characters" });
     return;
   }
 
@@ -36,8 +37,6 @@ router.post("/conversations/:id/generate-image", requireAuth, async (req, res): 
     res.status(404).json({ error: "Conversation not found" });
     return;
   }
-
-  const { prompt } = body.data;
 
   const [userMessage] = await db
     .insert(messagesTable)
