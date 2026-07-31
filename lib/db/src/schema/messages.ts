@@ -13,6 +13,8 @@ export const messagesTable = pgTable("messages", {
   audioMimeType: text("audio_mime_type"),
   /** Set on user-role voice messages when the speaker was identified */
   speakerName: text("speaker_name"),
+  /** Set on assistant messages generated via /generate-image (xAI Grok image model) */
+  imageUrl: text("image_url"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
