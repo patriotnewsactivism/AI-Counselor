@@ -197,9 +197,44 @@ const TOOLS = [
       required: ["access_code", "to", "body"],
     },
   },
+  {
+    name: "notify_don",
+    description:
+      "Immediately email Don about an important or urgent call so he can follow up personally -- for press/legal/court contacts, family, business/partnership inquiries, or anything the caller insists is urgent. This tool is account-independent (no access_code needed) -- it's for the front-desk receptionist agent, not the per-account companion.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        caller_name: { type: "string", description: "The caller's name, if given." },
+        callback_number: { type: "string", description: "A callback number, if given." },
+        reason: { type: "string", description: "Why they're calling, in their own words." },
+        urgency: { type: "string", description: "How urgent this seems (e.g. routine, high, emergency)." },
+      },
+      required: ["reason"],
+    },
+  },
 ];
 
 async function handleToolCall(name: string, args: Record<string, unknown> | undefined) {
+  if (name === "notify_don") {
+    const callerName = typeof args?.caller_name === "string" && args.caller_name.trim() ? args.caller_name.trim() : "Unknown caller";
+    const callbackNumber = typeof args?.callback_number === "string" && args.callback_number.trim() ? args.callback_number.trim() : "Not provided";
+    const reason = typeof args?.reason === "string" ? args.reason.trim() : "";
+    const urgency = typeof args?.urgency === "string" && args.urgency.trim() ? args.urgency.trim() : "Unspecified";
+    if (!reason) return toolText("No reason given -- nothing sent.", true);
+    const notifyTo = process.env.DON_ALERT_EMAIL;
+    if (!notifyTo) return toolText("Alert email destination isn't configured yet -- tell the caller you've noted it and will follow up.", true);
+    try {
+      await sendEmail(
+        notifyTo,
+        `Call alert: ${callerName} (${urgency})`,
+        `Caller: ${callerName}\nCallback: ${callbackNumber}\nUrgency: ${urgency}\n\nReason:\n${reason}`,
+      );
+      return toolText("Don has been notified.");
+    } catch {
+      return toolText("Couldn't send the alert right now -- tell the caller you've noted the message and will follow up.", true);
+    }
+  }
+
   const accessCode = typeof args?.access_code === "string" ? args.access_code.trim() : "";
   if (!accessCode) {
     return toolText("No access_code provided. Ask the caller for their 6-digit phone access code and call verify_caller with it first.", true);
