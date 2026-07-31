@@ -14,6 +14,7 @@ import { requireHistoryUnlock } from "../../middlewares/requireHistoryUnlock";
 import messagesRouter from "./messages";
 import voiceMessagesRouter from "./voiceMessages";
 import generateImageRouter from "./generateImage";
+import emailTranscriptRouter from "./emailTranscript";
 
 const router: IRouter = Router();
 
@@ -92,5 +93,6 @@ router.delete("/conversations/:id", requireAuth, async (req, res): Promise<void>
 router.use(messagesRouter);
 router.use(voiceMessagesRouter);
 router.use(generateImageRouter);
+router.use(emailTranscriptRouter);
 
 export default router;
