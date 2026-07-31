@@ -14,11 +14,13 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Loader2, User, Mic, Square, Download } from "lucide-react";
+import { Loader2, User, Mic, Square, Download, ImagePlus } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { getListMessagesQueryKey, getListConversationsQueryKey, getGetConversationQueryKey } from "@workspace/api-client-react";
 import { useToast } from "@/hooks/use-toast";
 import { usePWAInstall } from "@/hooks/use-pwa-install";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 
 /** wss://<api host> derived from the same VITE_API_URL the rest of the app
  * uses for HTTP calls (see main.tsx). Empty in local dev, where Vite proxies
@@ -52,6 +54,9 @@ export default function CompanionPage() {
   const [streamTranscript, setStreamTranscript] = useState("");
   const [streamError, setStreamError] = useState<string | null>(null);
   const { canInstall, promptInstall } = usePWAInstall();
+  const [imagePromptOpen, setImagePromptOpen] = useState(false);
+  const [imagePrompt, setImagePrompt] = useState("");
+  const [isGeneratingImage, setIsGeneratingImage] = useState(false);
 
   const isNew = !id;
   const conversationId = isNew ? null : parseInt(id, 10);
@@ -127,6 +132,34 @@ export default function CompanionPage() {
     }
   };
 
+  const sendImagePrompt = async () => {
+    const prompt = imagePrompt.trim();
+    if (!prompt) return;
+    setIsGeneratingImage(true);
+    try {
+      const targetId = await ensureConversation();
+      const token = await getToken();
+      const apiUrl = import.meta.env.VITE_API_URL || "";
+      const res = await fetch(`${apiUrl}/conversations/${targetId}/generate-image`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ prompt }),
+      });
+      if (!res.ok) throw new Error(`Image generation failed: ${res.status}`);
+      queryClient.invalidateQueries({ queryKey: getListMessagesQueryKey(targetId) });
+      setImagePrompt("");
+      setImagePromptOpen(false);
+    } catch (error) {
+      console.error("Failed to generate image", error);
+      toast({ title: "Couldn't generate that image", description: "Please try again.", variant: "destructive" });
+    } finally {
+      setIsGeneratingImage(false);
+    }
+  };
+
   const startGrokStream = async () => {
     if (!wsBaseUrl) return;
     setStreamError(null);
@@ -185,6 +218,32 @@ export default function CompanionPage() {
             <Download className="h-4 w-4" /> Install
           </Button>
         )}
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-1.5 shrink-0"
+          onClick={() => setImagePromptOpen(true)}
+        >
+          <ImagePlus className="h-4 w-4" /> Image
+        </Button>
+        <Dialog open={imagePromptOpen} onOpenChange={setImagePromptOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Generate an image</DialogTitle>
+            </DialogHeader>
+            <Textarea
+              value={imagePrompt}
+              onChange={(e) => setImagePrompt(e.target.value)}
+              placeholder="Describe the image you want..."
+              rows={4}
+              disabled={isGeneratingImage}
+            />
+            <Button onClick={() => void sendImagePrompt()} disabled={isGeneratingImage || !imagePrompt.trim()}>
+              {isGeneratingImage && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+              Generate
+            </Button>
+          </DialogContent>
+        </Dialog>
       </header>
 
       <ScrollArea className="flex-1 p-4 md:p-8">
@@ -205,6 +264,13 @@ export default function CompanionPage() {
                   {!isUser && <Avatar className="h-8 w-8 border border-border mt-1 shrink-0"><AvatarFallback className="bg-primary/10 text-primary text-xs font-serif">{companionName[0]}</AvatarFallback></Avatar>}
                   <div className={cn("relative px-5 py-3.5 max-w-[85%] md:max-w-[75%]", isUser ? "bg-primary text-primary-foreground rounded-2xl rounded-tr-sm" : "bg-card border border-border text-card-foreground rounded-2xl rounded-tl-sm shadow-sm")}>
                     <div className="text-[15px] leading-relaxed break-words whitespace-pre-wrap">{msg.content}</div>
+                    {(msg as { imageUrl?: string | null }).imageUrl && (
+                      <img
+                        src={(msg as { imageUrl?: string | null }).imageUrl!}
+                        alt="Generated"
+                        className="mt-2 rounded-lg max-w-full border border-border/50"
+                      />
+                    )}
                   </div>
                   {isUser && (
                     <div className="flex flex-col items-end gap-1 mt-1 shrink-0">
