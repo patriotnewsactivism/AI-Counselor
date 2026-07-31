@@ -13,6 +13,7 @@ import { requireAuth, type AuthedRequest } from "../../middlewares/requireAuth";
 import { requireHistoryUnlock } from "../../middlewares/requireHistoryUnlock";
 import messagesRouter from "./messages";
 import voiceMessagesRouter from "./voiceMessages";
+import generateImageRouter from "./generateImage";
 
 const router: IRouter = Router();
 
@@ -90,5 +91,6 @@ router.delete("/conversations/:id", requireAuth, async (req, res): Promise<void>
 
 router.use(messagesRouter);
 router.use(voiceMessagesRouter);
+router.use(generateImageRouter);
 
 export default router;
