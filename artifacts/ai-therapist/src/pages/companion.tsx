@@ -14,7 +14,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Loader2, User, Mic, Square, Download, ImagePlus } from "lucide-react";
+import { Loader2, User, Mic, Square, Download, ImagePlus, Mail } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { getListMessagesQueryKey, getListConversationsQueryKey, getGetConversationQueryKey } from "@workspace/api-client-react";
 import { useToast } from "@/hooks/use-toast";
@@ -160,6 +160,29 @@ export default function CompanionPage() {
     }
   };
 
+  const emailContent = async (messageId?: number) => {
+    const toEmail = window.prompt(messageId ? "Email this to:" : "Email the full transcript to:");
+    if (!toEmail || !toEmail.trim()) return;
+    try {
+      const targetId = await ensureConversation();
+      const token = await getToken();
+      const apiUrl = import.meta.env.VITE_API_URL || "";
+      const res = await fetch(`${apiUrl}/conversations/${targetId}/email`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ toEmail: toEmail.trim(), ...(messageId ? { messageId } : {}) }),
+      });
+      if (!res.ok) throw new Error(`Email send failed: ${res.status}`);
+      toast({ title: "Sent", description: `Emailed to ${toEmail.trim()}` });
+    } catch (error) {
+      console.error("Failed to send email", error);
+      toast({ title: "Couldn't send that email", description: "Please try again.", variant: "destructive" });
+    }
+  };
+
   const startGrokStream = async () => {
     if (!wsBaseUrl) return;
     setStreamError(null);
@@ -244,6 +267,14 @@ export default function CompanionPage() {
             </Button>
           </DialogContent>
         </Dialog>
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-1.5 shrink-0"
+          onClick={() => void emailContent()}
+        >
+          <Mail className="h-4 w-4" /> Email
+        </Button>
       </header>
 
       <ScrollArea className="flex-1 p-4 md:p-8">
@@ -262,7 +293,7 @@ export default function CompanionPage() {
               return (
                 <div key={msg.id} className={cn("flex w-full gap-4", isUser ? "justify-end" : "justify-start")}>
                   {!isUser && <Avatar className="h-8 w-8 border border-border mt-1 shrink-0"><AvatarFallback className="bg-primary/10 text-primary text-xs font-serif">{companionName[0]}</AvatarFallback></Avatar>}
-                  <div className={cn("relative px-5 py-3.5 max-w-[85%] md:max-w-[75%]", isUser ? "bg-primary text-primary-foreground rounded-2xl rounded-tr-sm" : "bg-card border border-border text-card-foreground rounded-2xl rounded-tl-sm shadow-sm")}>
+                  <div className={cn("relative group px-5 py-3.5 max-w-[85%] md:max-w-[75%]", isUser ? "bg-primary text-primary-foreground rounded-2xl rounded-tr-sm" : "bg-card border border-border text-card-foreground rounded-2xl rounded-tl-sm shadow-sm")}>
                     <div className="text-[15px] leading-relaxed break-words whitespace-pre-wrap">{msg.content}</div>
                     {(msg as { imageUrl?: string | null }).imageUrl && (
                       <img
@@ -270,6 +301,16 @@ export default function CompanionPage() {
                         alt="Generated"
                         className="mt-2 rounded-lg max-w-full border border-border/50"
                       />
+                    )}
+                    {!isUser && (
+                      <button
+                        type="button"
+                        aria-label="Email this message"
+                        onClick={() => void emailContent(msg.id)}
+                        className="absolute -bottom-2 -right-2 h-6 w-6 rounded-full bg-card border border-border flex items-center justify-center text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity"
+                      >
+                        <Mail className="h-3 w-3" />
+                      </button>
                     )}
                   </div>
                   {isUser && (
