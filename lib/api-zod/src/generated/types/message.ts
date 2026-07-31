@@ -14,5 +14,7 @@ export interface Message {
   content: string;
   /** @nullable */
   speakerName?: string | null;
+  /** @nullable */
+  imageUrl?: string | null;
   createdAt: Date;
 }
