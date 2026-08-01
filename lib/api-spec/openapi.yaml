@@ -24,6 +24,8 @@ tags:
     description: History PIN — gates access to past conversations
   - name: phone-access
     description: Phone access code — lets the phone-hosted voice agent identify an account
+  - name: voice-auth
+    description: Voice ID — an MFCC-based voice-biometric alternative to the History PIN, enrolled and verified in-browser
 paths:
   /healthz:
     get:
@@ -435,6 +437,95 @@ paths:
           description: Deleted
         "404":
           description: Not found
+  /voice-auth/status:
+    get:
+      operationId: getVoiceAuthStatus
+      tags: [voice-auth]
+      summary: Check whether Voice ID is enrolled for this account
+      responses:
+        "200":
+          description: Voice ID enrollment status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VoiceAuthStatusResponse"
+  /voice-auth/challenge:
+    post:
+      operationId: createVoiceAuthChallenge
+      tags: [voice-auth]
+      summary: Issue a short-lived spoken challenge phrase (a 4-digit sequence)
+      description: >
+        Call this immediately before recording, whether enrolling or
+        verifying. The returned phrase must be read aloud in the same
+        recording that gets sent to enroll/verify — this is both a liveness
+        check (defeats simple replay of old audio) and a content check
+        (confirms real speech was captured, not silence or noise).
+      responses:
+        "200":
+          description: Challenge issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VoiceAuthChallengeResponse"
+  /voice-auth/enroll:
+    post:
+      operationId: enrollVoiceAuth
+      tags: [voice-auth]
+      summary: Enroll Voice ID from one or more challenge recordings
+      description: >
+        Provide 1-3 recordings, each reading aloud the phrase from a fresh
+        /voice-auth/challenge call. Multiple samples are averaged into a
+        single voiceprint template for better robustness.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VoiceAuthEnrollInput"
+      responses:
+        "200":
+          description: Voice ID enrolled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VoiceAuthEnrollResponse"
+        "400":
+          description: Challenge expired/invalid, or the spoken phrase didn't match
+  /voice-auth/verify:
+    post:
+      operationId: verifyVoiceAuth
+      tags: [voice-auth]
+      summary: Verify Voice ID and obtain a short-lived unlock token
+      description: >
+        Uses the exact same token type as History PIN unlock (HistoryTokenResponse)
+        so the frontend can treat a Voice ID match as an equivalent unlock.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VoiceAuthVerifyInput"
+      responses:
+        "200":
+          description: Voice match — unlock token issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HistoryTokenResponse"
+        "400":
+          description: Voice ID not enrolled, or challenge expired/invalid
+        "401":
+          description: Spoken phrase didn't match, or voice didn't match closely enough
+        "429":
+          description: Too many failed attempts — temporarily locked out
+  /voice-auth:
+    delete:
+      operationId: removeVoiceAuth
+      tags: [voice-auth]
+      summary: Remove Voice ID enrollment
+      responses:
+        "204":
+          description: Removed (or was never enrolled)
 components:
   schemas:
     HealthStatus:
@@ -619,3 +710,51 @@ components:
           type: string
           description: Opaque signed token — send as the X-History-Token header
         expiresAt: { type: string, format: date-time }
+    VoiceAuthStatusResponse:
+      type: object
+      required: [enrolled]
+      properties:
+        enrolled: { type: boolean }
+        enrolledAt: { type: ["string", "null"], format: date-time }
+        modelVersion: { type: ["string", "null"] }
+    VoiceAuthChallengeResponse:
+      type: object
+      required: [challengeId, phrase, expiresAt]
+      properties:
+        challengeId: { type: string }
+        phrase:
+          type: string
+          description: A short digit sequence to read aloud, e.g. "7 2 9 4"
+        expiresAt: { type: string, format: date-time }
+    VoiceAuthSample:
+      type: object
+      required: [audioBase64, mimeType, challengeId]
+      properties:
+        audioBase64:
+          type: string
+          description: Base64-encoded audio/wav bytes (16-bit PCM)
+        mimeType: { type: string }
+        challengeId: { type: string }
+    VoiceAuthEnrollInput:
+      type: object
+      required: [samples]
+      properties:
+        samples:
+          type: array
+          minItems: 1
+          maxItems: 3
+          items:
+            $ref: "#/components/schemas/VoiceAuthSample"
+    VoiceAuthEnrollResponse:
+      type: object
+      required: [enrolled, sampleCount]
+      properties:
+        enrolled: { type: boolean }
+        sampleCount: { type: integer }
+    VoiceAuthVerifyInput:
+      type: object
+      required: [audioBase64, mimeType, challengeId]
+      properties:
+        audioBase64: { type: string }
+        mimeType: { type: string }
+        challengeId: { type: string }

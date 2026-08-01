@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { VoiceProfilesSection } from "@/components/settings/voice-profiles";
 import { HistoryPinSection } from "@/components/settings/history-pin";
+import { VoiceIdSection } from "@/components/settings/voice-id";
 import { PhoneAccessCodeSection } from "@/components/settings/phone-access-code";
 
 export default function SettingsPage() {
@@ -197,6 +198,7 @@ export default function SettingsPage() {
           <PhoneAccessCodeSection />
 
           <HistoryPinSection />
+          <VoiceIdSection />
 
           <section className="pt-8 border-t border-border mt-4">
             <p className="text-xs text-muted-foreground text-center">

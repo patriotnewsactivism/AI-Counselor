@@ -59,8 +59,27 @@ CREATE TABLE IF NOT EXISTS voice_profiles (
 );
 CREATE INDEX IF NOT EXISTS idx_voice_profiles_user_id ON voice_profiles(user_id);
 
+CREATE TABLE IF NOT EXISTS voice_auth_templates (
+  user_id             text PRIMARY KEY,
+  template_encrypted  text NOT NULL,
+  model_version       text NOT NULL DEFAULT 'mfcc-stat-v1',
+  sample_count        integer NOT NULL DEFAULT 1,
+  enrolled_at         timestamptz NOT NULL DEFAULT now(),
+  updated_at          timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS voice_auth_attempts (
+  id          serial PRIMARY KEY,
+  user_id     text NOT NULL,
+  success     boolean NOT NULL,
+  score       real,
+  reason      text NOT NULL,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_voice_auth_attempts_user_id ON voice_auth_attempts(user_id);
+
 -- Verification
 SELECT table_name FROM information_schema.tables
 WHERE table_schema='public'
-AND table_name IN ('profiles','conversations','messages','memories','voice_profiles')
+AND table_name IN ('profiles','conversations','messages','memories','voice_profiles','voice_auth_templates','voice_auth_attempts')
 ORDER BY table_name;

@@ -178,3 +178,44 @@ export interface HistoryTokenResponse {
   expiresAt: string;
 }
 
+export interface VoiceAuthStatusResponse {
+  enrolled: boolean;
+  /** @nullable */
+  enrolledAt?: string | null;
+  /** @nullable */
+  modelVersion?: string | null;
+}
+
+export interface VoiceAuthChallengeResponse {
+  challengeId: string;
+  /** A short digit sequence to read aloud, e.g. "7 2 9 4" */
+  phrase: string;
+  expiresAt: string;
+}
+
+export interface VoiceAuthSample {
+  /** Base64-encoded audio/wav bytes (16-bit PCM) */
+  audioBase64: string;
+  mimeType: string;
+  challengeId: string;
+}
+
+export interface VoiceAuthEnrollInput {
+  /**
+     * @minItems 1
+     * @maxItems 3
+     */
+  samples: VoiceAuthSample[];
+}
+
+export interface VoiceAuthEnrollResponse {
+  enrolled: boolean;
+  sampleCount: number;
+}
+
+export interface VoiceAuthVerifyInput {
+  audioBase64: string;
+  mimeType: string;
+  challengeId: string;
+}
+

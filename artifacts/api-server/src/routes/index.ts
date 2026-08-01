@@ -8,6 +8,7 @@ import voiceProfilesRouter from "./voiceProfiles";
 import historyRouter from "./history";
 import phoneAccessRouter from "./phoneAccess";
 import mcpBridgeRouter from "./mcpBridge";
+import voiceAuthRouter from "./voiceAuth";
 
 const router: IRouter = Router();
 
@@ -20,5 +21,6 @@ router.use(voiceProfilesRouter);
 router.use(historyRouter);
 router.use(phoneAccessRouter);
 router.use(mcpBridgeRouter);
+router.use(voiceAuthRouter);
 
 export default router;
