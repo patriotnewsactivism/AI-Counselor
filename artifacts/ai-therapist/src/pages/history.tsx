@@ -20,6 +20,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { getHistoryToken, setHistoryToken, clearHistoryToken } from "@/lib/history-access";
+import { VoiceIdUnlock } from "@/components/settings/voice-id-unlock";
 
 export default function HistoryPage() {
   const { data: profile, isLoading: isLoadingProfile } = useGetProfile();
@@ -227,6 +228,14 @@ export default function HistoryPage() {
                     {setHistoryPin.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Set PIN & View History"}
                   </Button>
                 </form>
+              )}
+              {profile?.historyPinEnabled && (
+                <VoiceIdUnlock
+                  onUnlocked={(unlockToken, expiresAt) => {
+                    setHistoryToken(unlockToken, expiresAt);
+                    setToken(unlockToken);
+                  }}
+                />
               )}
               <p className="text-xs text-muted-foreground text-center mt-4">
                 You can change or remove this PIN anytime in Settings.

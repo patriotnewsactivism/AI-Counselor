@@ -386,3 +386,68 @@ export const DeleteVoiceProfileParams = zod.object({
 export const DeleteVoiceProfileResponse = zod.void()
 
 
+/**
+ * @summary Check whether Voice ID is enrolled for this account
+ */
+export const GetVoiceAuthStatusResponse = zod.object({
+  "enrolled": zod.boolean(),
+  "enrolledAt": zod.coerce.date().nullish(),
+  "modelVersion": zod.string().nullish()
+})
+
+
+/**
+ * Call this immediately before recording, whether enrolling or verifying. The returned phrase must be read aloud in the same recording that gets sent to enroll/verify — this is both a liveness check (defeats simple replay of old audio) and a content check (confirms real speech was captured, not silence or noise).
+ * @summary Issue a short-lived spoken challenge phrase (a 4-digit sequence)
+ */
+export const CreateVoiceAuthChallengeResponse = zod.object({
+  "challengeId": zod.string(),
+  "phrase": zod.string().describe('A short digit sequence to read aloud, e.g. \"7 2 9 4\"'),
+  "expiresAt": zod.coerce.date()
+})
+
+
+/**
+ * Provide 1-3 recordings, each reading aloud the phrase from a fresh /voice-auth/challenge call. Multiple samples are averaged into a single voiceprint template for better robustness.
+ * @summary Enroll Voice ID from one or more challenge recordings
+ */
+export const enrollVoiceAuthBodySamplesMax = 3;
+
+
+
+export const EnrollVoiceAuthBody = zod.object({
+  "samples": zod.array(zod.object({
+  "audioBase64": zod.string().describe('Base64-encoded audio\/wav bytes (16-bit PCM)'),
+  "mimeType": zod.string(),
+  "challengeId": zod.string()
+})).min(1).max(enrollVoiceAuthBodySamplesMax)
+})
+
+export const EnrollVoiceAuthResponse = zod.object({
+  "enrolled": zod.boolean(),
+  "sampleCount": zod.number()
+})
+
+
+/**
+ * Uses the exact same token type as History PIN unlock (HistoryTokenResponse) so the frontend can treat a Voice ID match as an equivalent unlock.
+ * @summary Verify Voice ID and obtain a short-lived unlock token
+ */
+export const VerifyVoiceAuthBody = zod.object({
+  "audioBase64": zod.string(),
+  "mimeType": zod.string(),
+  "challengeId": zod.string()
+})
+
+export const VerifyVoiceAuthResponse = zod.object({
+  "token": zod.string().describe('Opaque signed token — send as the X-History-Token header'),
+  "expiresAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Remove Voice ID enrollment
+ */
+export const RemoveVoiceAuthResponse = zod.void()
+
+

@@ -36,6 +36,11 @@ import type {
   Profile,
   ProfileUpdate,
   Stats,
+  VoiceAuthChallengeResponse,
+  VoiceAuthEnrollInput,
+  VoiceAuthEnrollResponse,
+  VoiceAuthStatusResponse,
+  VoiceAuthVerifyInput,
   VoiceMessageExchange,
   VoiceMessageInput,
   VoiceProfile,
@@ -1685,5 +1690,369 @@ export const useDeleteVoiceProfile = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getDeleteVoiceProfileMutationOptions(options));
+    }
+
+export const getGetVoiceAuthStatusUrl = () => {
+
+
+
+
+  return `/api/voice-auth/status`
+}
+
+/**
+ * @summary Check whether Voice ID is enrolled for this account
+ */
+export const getVoiceAuthStatus = async ( options?: RequestInit): Promise<VoiceAuthStatusResponse> => {
+
+  return customFetch<VoiceAuthStatusResponse>(getGetVoiceAuthStatusUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetVoiceAuthStatusQueryKey = () => {
+    return [
+    `/api/voice-auth/status`
+    ] as const;
+    }
+
+
+export const getGetVoiceAuthStatusQueryOptions = <TData = Awaited<ReturnType<typeof getVoiceAuthStatus>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getVoiceAuthStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetVoiceAuthStatusQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getVoiceAuthStatus>>> = ({ signal }) => getVoiceAuthStatus({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getVoiceAuthStatus>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetVoiceAuthStatusQueryResult = NonNullable<Awaited<ReturnType<typeof getVoiceAuthStatus>>>
+export type GetVoiceAuthStatusQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Check whether Voice ID is enrolled for this account
+ */
+
+export function useGetVoiceAuthStatus<TData = Awaited<ReturnType<typeof getVoiceAuthStatus>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getVoiceAuthStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetVoiceAuthStatusQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreateVoiceAuthChallengeUrl = () => {
+
+
+
+
+  return `/api/voice-auth/challenge`
+}
+
+/**
+ * Call this immediately before recording, whether enrolling or verifying. The returned phrase must be read aloud in the same recording that gets sent to enroll/verify — this is both a liveness check (defeats simple replay of old audio) and a content check (confirms real speech was captured, not silence or noise).
+ * @summary Issue a short-lived spoken challenge phrase (a 4-digit sequence)
+ */
+export const createVoiceAuthChallenge = async ( options?: RequestInit): Promise<VoiceAuthChallengeResponse> => {
+
+  return customFetch<VoiceAuthChallengeResponse>(getCreateVoiceAuthChallengeUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getCreateVoiceAuthChallengeMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createVoiceAuthChallenge>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createVoiceAuthChallenge>>, TError,void, TContext> => {
+
+const mutationKey = ['createVoiceAuthChallenge'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createVoiceAuthChallenge>>, void> = () => {
+
+
+          return  createVoiceAuthChallenge(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateVoiceAuthChallengeMutationResult = NonNullable<Awaited<ReturnType<typeof createVoiceAuthChallenge>>>
+
+    export type CreateVoiceAuthChallengeMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Issue a short-lived spoken challenge phrase (a 4-digit sequence)
+ */
+export const useCreateVoiceAuthChallenge = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createVoiceAuthChallenge>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createVoiceAuthChallenge>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getCreateVoiceAuthChallengeMutationOptions(options));
+    }
+
+export const getEnrollVoiceAuthUrl = () => {
+
+
+
+
+  return `/api/voice-auth/enroll`
+}
+
+/**
+ * Provide 1-3 recordings, each reading aloud the phrase from a fresh /voice-auth/challenge call. Multiple samples are averaged into a single voiceprint template for better robustness.
+ * @summary Enroll Voice ID from one or more challenge recordings
+ */
+export const enrollVoiceAuth = async (voiceAuthEnrollInput: VoiceAuthEnrollInput, options?: RequestInit): Promise<VoiceAuthEnrollResponse> => {
+
+  return customFetch<VoiceAuthEnrollResponse>(getEnrollVoiceAuthUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(voiceAuthEnrollInput)
+  }
+);}
+
+
+
+
+
+export const getEnrollVoiceAuthMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof enrollVoiceAuth>>, TError,{data: BodyType<VoiceAuthEnrollInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof enrollVoiceAuth>>, TError,{data: BodyType<VoiceAuthEnrollInput>}, TContext> => {
+
+const mutationKey = ['enrollVoiceAuth'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof enrollVoiceAuth>>, {data: BodyType<VoiceAuthEnrollInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  enrollVoiceAuth(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type EnrollVoiceAuthMutationResult = NonNullable<Awaited<ReturnType<typeof enrollVoiceAuth>>>
+    export type EnrollVoiceAuthMutationBody = BodyType<VoiceAuthEnrollInput>
+    export type EnrollVoiceAuthMutationError = ErrorType<void>
+
+    /**
+ * @summary Enroll Voice ID from one or more challenge recordings
+ */
+export const useEnrollVoiceAuth = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof enrollVoiceAuth>>, TError,{data: BodyType<VoiceAuthEnrollInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof enrollVoiceAuth>>,
+        TError,
+        {data: BodyType<VoiceAuthEnrollInput>},
+        TContext
+      > => {
+      return useMutation(getEnrollVoiceAuthMutationOptions(options));
+    }
+
+export const getVerifyVoiceAuthUrl = () => {
+
+
+
+
+  return `/api/voice-auth/verify`
+}
+
+/**
+ * Uses the exact same token type as History PIN unlock (HistoryTokenResponse) so the frontend can treat a Voice ID match as an equivalent unlock.
+ * @summary Verify Voice ID and obtain a short-lived unlock token
+ */
+export const verifyVoiceAuth = async (voiceAuthVerifyInput: VoiceAuthVerifyInput, options?: RequestInit): Promise<HistoryTokenResponse> => {
+
+  return customFetch<HistoryTokenResponse>(getVerifyVoiceAuthUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(voiceAuthVerifyInput)
+  }
+);}
+
+
+
+
+
+export const getVerifyVoiceAuthMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof verifyVoiceAuth>>, TError,{data: BodyType<VoiceAuthVerifyInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof verifyVoiceAuth>>, TError,{data: BodyType<VoiceAuthVerifyInput>}, TContext> => {
+
+const mutationKey = ['verifyVoiceAuth'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof verifyVoiceAuth>>, {data: BodyType<VoiceAuthVerifyInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  verifyVoiceAuth(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type VerifyVoiceAuthMutationResult = NonNullable<Awaited<ReturnType<typeof verifyVoiceAuth>>>
+    export type VerifyVoiceAuthMutationBody = BodyType<VoiceAuthVerifyInput>
+    export type VerifyVoiceAuthMutationError = ErrorType<void>
+
+    /**
+ * @summary Verify Voice ID and obtain a short-lived unlock token
+ */
+export const useVerifyVoiceAuth = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof verifyVoiceAuth>>, TError,{data: BodyType<VoiceAuthVerifyInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof verifyVoiceAuth>>,
+        TError,
+        {data: BodyType<VoiceAuthVerifyInput>},
+        TContext
+      > => {
+      return useMutation(getVerifyVoiceAuthMutationOptions(options));
+    }
+
+export const getRemoveVoiceAuthUrl = () => {
+
+
+
+
+  return `/api/voice-auth`
+}
+
+/**
+ * @summary Remove Voice ID enrollment
+ */
+export const removeVoiceAuth = async ( options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getRemoveVoiceAuthUrl(),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getRemoveVoiceAuthMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof removeVoiceAuth>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof removeVoiceAuth>>, TError,void, TContext> => {
+
+const mutationKey = ['removeVoiceAuth'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof removeVoiceAuth>>, void> = () => {
+
+
+          return  removeVoiceAuth(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RemoveVoiceAuthMutationResult = NonNullable<Awaited<ReturnType<typeof removeVoiceAuth>>>
+
+    export type RemoveVoiceAuthMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Remove Voice ID enrollment
+ */
+export const useRemoveVoiceAuth = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof removeVoiceAuth>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof removeVoiceAuth>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getRemoveVoiceAuthMutationOptions(options));
     }
 
